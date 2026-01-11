@@ -2,6 +2,7 @@
 """
 System Analyzer Tool
 Analyzes existing systems and generates documentation and Infrastructure-as-Code
+Supports both local and remote (SSH) analysis
 """
 
 import argparse
@@ -15,6 +16,8 @@ from pathlib import Path
 from analyzers.process_analyzer import ProcessAnalyzer
 from analyzers.file_analyzer import FileAnalyzer
 from analyzers.history_analyzer import HistoryAnalyzer
+from analyzers.remote_analyzer import RemoteSystemAnalyzer
+from connectors.ssh_executor import SSHExecutor, SSHConfig
 from connectors.gitlab_connector import GitLabConnector
 from connectors.harbor_connector import HarborConnector
 from connectors.vcenter_connector import VCenterConnector
@@ -38,8 +41,11 @@ logger = logging.getLogger(__name__)
 class SystemAnalyzer:
     """Main system analyzer class that orchestrates all analysis and generation"""
 
-    def __init__(self, config_path: str = None):
+    def __init__(self, config_path: str = None, remote_config: SSHConfig = None):
         self.config = self._load_config(config_path)
+        self.remote_config = remote_config
+        self.ssh: SSHExecutor = None
+        self.is_remote = remote_config is not None
         self.analysis_data = {
             'timestamp': datetime.now().isoformat(),
             'hostname': os.uname().nodename,
@@ -281,8 +287,54 @@ class SystemAnalyzer:
 
         return issues
 
+    def connect_remote(self) -> bool:
+        """Connect to remote server via SSH"""
+        if not self.remote_config:
+            return False
+
+        self.ssh = SSHExecutor(self.remote_config)
+        if self.ssh.connect():
+            self.analysis_data['hostname'] = self.ssh.get_hostname()
+            self.analysis_data['os_info'] = self.ssh.get_os_info()
+            return True
+        return False
+
+    def disconnect_remote(self) -> None:
+        """Disconnect from remote server"""
+        if self.ssh:
+            self.ssh.disconnect()
+            self.ssh = None
+
+    def run_remote_analysis(self) -> dict:
+        """Run analysis on a remote server via SSH"""
+        if not self.ssh or not self.ssh.connected:
+            if not self.connect_remote():
+                raise RuntimeError(f"Failed to connect to {self.remote_config.hostname}")
+
+        logger.info(f"Starting remote analysis of {self.analysis_data['hostname']}...")
+
+        try:
+            analyzer = RemoteSystemAnalyzer(self.ssh)
+            remote_data = analyzer.analyze_all()
+
+            # Merge with analysis_data
+            self.analysis_data.update(remote_data)
+            self.analysis_data['timestamp'] = datetime.now().isoformat()
+
+            # Generate summary
+            self.generate_summary()
+
+            logger.info("Remote analysis complete!")
+            return self.analysis_data
+
+        finally:
+            self.disconnect_remote()
+
     def run_full_analysis(self) -> dict:
-        """Run complete system analysis"""
+        """Run complete system analysis (local or remote)"""
+        if self.is_remote:
+            return self.run_remote_analysis()
+
         logger.info("Starting full system analysis...")
 
         self.analyze_processes()
@@ -431,8 +483,52 @@ class SystemAnalyzer:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='System Analyzer - Analyze systems and generate documentation/IaC'
+        description='System Analyzer - Analyze systems and generate documentation/IaC',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Analyze a remote server
+  python analyzer.py -H server.example.com -u ubuntu -k ~/.ssh/id_rsa
+
+  # Analyze with sudo password
+  python analyzer.py -H server.example.com -u admin -k ~/.ssh/id_rsa --sudo-pass
+
+  # Batch process from CSV
+  python batch_processor.py servers.csv -k ~/.ssh/id_rsa
+
+  # Generate CSV template
+  python batch_processor.py --template
+        """
     )
+
+    # Remote connection options
+    remote_group = parser.add_argument_group('Remote Connection')
+    remote_group.add_argument(
+        '-H', '--host',
+        help='Remote hostname or IP to analyze'
+    )
+    remote_group.add_argument(
+        '-u', '--user',
+        default='root',
+        help='SSH username (default: root)'
+    )
+    remote_group.add_argument(
+        '-p', '--port',
+        type=int,
+        default=22,
+        help='SSH port (default: 22)'
+    )
+    remote_group.add_argument(
+        '-k', '--key',
+        help='Path to SSH private key'
+    )
+    remote_group.add_argument(
+        '--sudo-pass',
+        action='store_true',
+        help='Prompt for sudo password'
+    )
+
+    # General options
     parser.add_argument(
         '-c', '--config',
         help='Path to configuration file',
@@ -483,8 +579,29 @@ def main():
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    analyzer = SystemAnalyzer(args.config)
+    # Build remote config if host is specified
+    remote_config = None
+    if args.host:
+        sudo_password = None
+        if args.sudo_pass:
+            import getpass
+            sudo_password = getpass.getpass("Sudo password: ")
+
+        remote_config = SSHConfig(
+            hostname=args.host,
+            username=args.user,
+            port=args.port,
+            private_key_path=args.key,
+            sudo_password=sudo_password,
+            use_sudo=True
+        )
+
+    analyzer = SystemAnalyzer(args.config, remote_config=remote_config)
     analyzer.config['output_dir'] = args.output
+
+    # Adjust output directory for remote hosts
+    if args.host:
+        analyzer.config['output_dir'] = os.path.join(args.output, args.host)
 
     if args.generate_only:
         if args.analysis_file:
@@ -494,8 +611,12 @@ def main():
             print("Error: --analysis-file required with --generate-only")
             sys.exit(1)
     else:
-        analyzer.run_full_analysis()
-        analyzer.save_analysis()
+        try:
+            analyzer.run_full_analysis()
+            analyzer.save_analysis()
+        except Exception as e:
+            logger.error(f"Analysis failed: {e}")
+            sys.exit(1)
 
     if not args.analyze_only:
         if args.cost_only:
