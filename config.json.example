@@ -1,0 +1,24 @@
+{
+    "gitlab": {
+        "url": "https://gitlab.example.com",
+        "token": "your-gitlab-token"
+    },
+    "harbor": {
+        "url": "https://harbor.example.com",
+        "username": "admin",
+        "password": "your-harbor-password"
+    },
+    "vcenter": {
+        "host": "vcenter.example.com",
+        "username": "administrator@vsphere.local",
+        "password": "your-vcenter-password"
+    },
+    "proxmox": {
+        "host": "proxmox.example.com",
+        "username": "root@pam",
+        "password": "your-proxmox-password"
+    },
+    "output_dir": "output",
+    "analyze_users": ["root", "ubuntu", "deploy"],
+    "vsphere_template": "ubuntu-22.04-template"
+}

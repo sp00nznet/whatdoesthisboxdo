@@ -1,0 +1,15 @@
+# System Analyzer Requirements
+
+# Core dependencies
+psutil>=5.9.0
+requests>=2.28.0
+PyYAML>=6.0
+
+# vCenter integration (optional)
+pyvmomi>=8.0.0.1
+
+# Proxmox integration (optional)
+proxmoxer>=2.0.0
+
+# For better output
+rich>=13.0.0
