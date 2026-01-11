@@ -68,6 +68,12 @@ python3 analyzer.py -H 192.168.1.100 -u ubuntu -k ~/.ssh/id_rsa
 # With password authentication (no key needed)
 python3 analyzer.py -H 192.168.1.100 -u admin --password
 
+# With metrics monitoring (60 seconds) for better usage insights
+python3 analyzer.py -H 192.168.1.100 -u ubuntu -k ~/.ssh/id_rsa -m 60
+
+# Extended monitoring (5 minutes) for thorough analysis
+python3 analyzer.py -H 192.168.1.100 -u ubuntu -k ~/.ssh/id_rsa -m 300
+
 # With sudo password prompt
 python3 analyzer.py -H server.example.com -u admin -k ~/.ssh/id_rsa --sudo-pass
 
@@ -80,6 +86,31 @@ python3 analyzer.py -H server.example.com -u root -k ~/.ssh/id_rsa -p 2222
 # Output to specific directory
 python3 analyzer.py -H server.example.com -u ubuntu -k ~/.ssh/id_rsa -o ./results
 ```
+
+## Metrics Monitoring
+
+Use the `-m/--monitor` option to collect metrics over time for more accurate analysis:
+
+```bash
+# Monitor for 60 seconds (good for quick assessment)
+python3 analyzer.py -H server.example.com -u ubuntu -k ~/.ssh/id_rsa -m 60
+
+# Monitor for 5 minutes (better for production servers)
+python3 analyzer.py -H server.example.com -u ubuntu -k ~/.ssh/id_rsa -m 300
+```
+
+The monitor collects:
+- CPU usage (average, min, max)
+- Memory usage patterns
+- Disk I/O rates
+- Network throughput
+- Top resource-consuming processes
+
+Results include:
+- **Health Score** (0-100) with assessment
+- **Insights** about resource usage patterns
+- **Warnings** for potential issues
+- **Recommendations** for optimization
 
 ## Batch Processing (CSV)
 
@@ -148,12 +179,21 @@ output/
 
 | Output | Description |
 |--------|-------------|
-| `documentation.md` | Server docs with troubleshooting guide |
-| `cost-estimate.md` | Annual cost: AWS vs GCP vs Azure |
+| `documentation.md` | Server purpose, health assessment, security analysis, troubleshooting |
+| `cost-estimate.md` | Annual cost comparison: AWS vs GCP vs Azure |
 | `terraform-aws/` | AWS EC2 configuration |
 | `terraform-gcp/` | GCP Compute Engine configuration |
 | `terraform-azure/` | Azure VM configuration |
 | `ansible/` | Playbooks to configure new servers |
+
+### Documentation Includes
+
+- **Executive Summary** - What does this server do? (with confidence score)
+- **Health Assessment** - Score out of 100 with warnings and insights
+- **Security Checklist** - Firewall, exposed ports, fail2ban, etc.
+- **Resource Metrics** - CPU, memory, disk, network with assessments
+- **Service Opinions** - Analysis of running services with recommendations
+- **Troubleshooting Guide** - Role-specific commands and tips
 
 ## Command Reference
 
@@ -161,8 +201,8 @@ output/
 
 ```
 usage: analyzer.py [-h] [-H HOST] [-u USER] [-p PORT] [-k KEY] [--sudo-pass]
-                   [--password] [-c CONFIG] [-o OUTPUT] [--analyze-only]
-                   [--no-cloud] [--cloud-only] [--cost-only] [-v]
+                   [--password] [-m SECONDS] [-c CONFIG] [-o OUTPUT]
+                   [--analyze-only] [--no-cloud] [--cloud-only] [--cost-only] [-v]
 
 Remote Connection:
   -H, --host HOST      Remote hostname or IP to analyze
@@ -171,6 +211,9 @@ Remote Connection:
   -k, --key KEY        Path to SSH private key
   --sudo-pass          Prompt for sudo password
   --password           Prompt for SSH password (instead of key)
+
+Monitoring:
+  -m, --monitor SECS   Collect metrics over specified duration (e.g., -m 60)
 
 Options:
   -o, --output DIR     Output directory (default: output)
