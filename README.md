@@ -24,13 +24,13 @@ A remote system analysis tool that connects to servers via SSH, analyzes them, e
 
 ```bash
 # Install
-pip install -r requirements.txt
+pip3 install -r requirements.txt
 
 # Analyze a remote server
-python analyzer.py -H server.example.com -u ubuntu -k ~/.ssh/id_rsa
+python3 analyzer.py -H server.example.com -u ubuntu -k ~/.ssh/id_rsa
 
 # Batch analyze from CSV
-python batch_processor.py servers.csv -k ~/.ssh/id_rsa
+python3 batch_processor.py servers.csv -k ~/.ssh/id_rsa
 ```
 
 ## How It Works
@@ -59,16 +59,16 @@ python batch_processor.py servers.csv -k ~/.ssh/id_rsa
 
 ```bash
 # Basic remote analysis
-python analyzer.py -H 192.168.1.100 -u ubuntu -k ~/.ssh/id_rsa
+python3 analyzer.py -H 192.168.1.100 -u ubuntu -k ~/.ssh/id_rsa
 
 # With sudo password prompt
-python analyzer.py -H server.example.com -u admin -k ~/.ssh/id_rsa --sudo-pass
+python3 analyzer.py -H server.example.com -u admin -k ~/.ssh/id_rsa --sudo-pass
 
 # Custom SSH port
-python analyzer.py -H server.example.com -u root -k ~/.ssh/id_rsa -p 2222
+python3 analyzer.py -H server.example.com -u root -k ~/.ssh/id_rsa -p 2222
 
 # Output to specific directory
-python analyzer.py -H server.example.com -u ubuntu -k ~/.ssh/id_rsa -o ./results
+python3 analyzer.py -H server.example.com -u ubuntu -k ~/.ssh/id_rsa -o ./results
 ```
 
 ## Batch Processing (CSV)
@@ -78,7 +78,7 @@ Analyze multiple servers at once using a CSV file.
 ### Generate CSV Template
 
 ```bash
-python batch_processor.py --template
+python3 batch_processor.py --template
 # Creates: servers.csv
 ```
 
@@ -95,13 +95,13 @@ server2.example.com,admin,22,~/.ssh/id_rsa,sudopass,db,Database server
 
 ```bash
 # Sequential processing
-python batch_processor.py servers.csv -k ~/.ssh/id_rsa
+python3 batch_processor.py servers.csv -k ~/.ssh/id_rsa
 
 # Parallel processing (4 servers at once)
-python batch_processor.py servers.csv -k ~/.ssh/id_rsa -p 4
+python3 batch_processor.py servers.csv -k ~/.ssh/id_rsa -p 4
 
 # Skip cloud generation
-python batch_processor.py servers.csv -k ~/.ssh/id_rsa --no-cloud
+python3 batch_processor.py servers.csv -k ~/.ssh/id_rsa --no-cloud
 ```
 
 ### Batch Output
@@ -197,7 +197,7 @@ Options:
 ### Python Dependencies
 
 ```bash
-pip install -r requirements.txt
+pip3 install -r requirements.txt
 ```
 
 Key packages:
