@@ -13,6 +13,20 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+# Load .env file if present
+def load_dotenv():
+    """Load environment variables from .env file"""
+    env_file = Path(__file__).parent / '.env'
+    if env_file.exists():
+        with open(env_file) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    os.environ.setdefault(key.strip(), value.strip())
+
+load_dotenv()
+
 from analyzers.process_analyzer import ProcessAnalyzer
 from analyzers.file_analyzer import FileAnalyzer
 from analyzers.history_analyzer import HistoryAnalyzer
@@ -59,7 +73,15 @@ class SystemAnalyzer:
             'virtualization': {},
             'summary': {},
             'metrics_analysis': {},
-            'monitoring_duration': monitor_duration
+            'monitoring_duration': monitor_duration,
+            'external_sources': {
+                'gitlab': {'configured': False, 'connected': False, 'error': None, 'data_collected': False},
+                'harbor': {'configured': False, 'connected': False, 'error': None, 'data_collected': False},
+                'vcenter': {'configured': False, 'connected': False, 'error': None, 'data_collected': False},
+                'proxmox': {'configured': False, 'connected': False, 'error': None, 'data_collected': False}
+            },
+            'path_repo_matches': [],  # Paths matched to GitLab repos
+            'container_registry_matches': []  # Running containers matched to Harbor
         }
 
     def _load_config(self, config_path: str) -> dict:
@@ -123,60 +145,226 @@ class SystemAnalyzer:
         return self.analysis_data['history']
 
     def analyze_gitlab(self) -> dict:
-        """Scan GitLab repositories"""
+        """Scan GitLab repositories and match with server paths"""
         logger.info("Scanning GitLab repositories...")
-        if not self.config['gitlab']['url']:
-            logger.warning("GitLab URL not configured, skipping...")
+        ext = self.analysis_data['external_sources']['gitlab']
+
+        if not self.config['gitlab']['url'] or not self.config['gitlab']['token']:
+            ext['error'] = 'GitLab URL or token not configured in .env'
+            logger.warning("GitLab not configured - set GITLAB_URL and GITLAB_TOKEN in .env")
             return {}
-        connector = GitLabConnector(
-            self.config['gitlab']['url'],
-            self.config['gitlab']['token']
-        )
-        self.analysis_data['gitlab'] = connector.scan_repos()
+
+        ext['configured'] = True
+
+        try:
+            connector = GitLabConnector(
+                self.config['gitlab']['url'],
+                self.config['gitlab']['token']
+            )
+            self.analysis_data['gitlab'] = connector.scan_repos()
+            ext['connected'] = True
+
+            if self.analysis_data['gitlab'].get('projects'):
+                ext['data_collected'] = True
+                # Match server paths with GitLab repos
+                self._match_paths_to_repos(connector)
+
+        except Exception as e:
+            ext['error'] = str(e)
+            logger.error(f"GitLab connection failed: {e}")
+
         return self.analysis_data['gitlab']
 
+    def _match_paths_to_repos(self, gitlab: GitLabConnector):
+        """Match paths found on server with GitLab repositories"""
+        matches = []
+
+        # Get important paths from file analysis
+        important_paths = self.analysis_data.get('files', {}).get('important_paths', [])
+        service_configs = self.analysis_data.get('files', {}).get('service_configs', {})
+
+        # Also check /opt, /var/www, /srv, /home directories
+        check_paths = ['/opt', '/var/www', '/srv', '/home']
+        hostname = self.analysis_data.get('hostname', '')
+
+        # Search for hostname and path names in GitLab
+        for project in self.analysis_data['gitlab'].get('projects', []):
+            project_name = project.get('name', '').lower()
+            project_path = project.get('path', '').lower()
+            description = project.get('description', '').lower() if project.get('description') else ''
+
+            # Check if hostname matches
+            if hostname.lower() in description or hostname.lower() in project_name:
+                matches.append({
+                    'type': 'hostname_match',
+                    'project': project['path'],
+                    'url': project.get('web_url', ''),
+                    'match_reason': f"Project references hostname '{hostname}'"
+                })
+
+        # Search code for hostname
+        related = gitlab.find_related_projects(hostname)
+        for item in related[:10]:
+            if isinstance(item, dict) and 'project' in item:
+                matches.append({
+                    'type': 'code_reference',
+                    'project': item.get('project'),
+                    'path': item.get('path', ''),
+                    'match_reason': f"Code contains reference to '{hostname}'"
+                })
+
+        self.analysis_data['path_repo_matches'] = matches
+
     def analyze_harbor(self) -> dict:
-        """Scan Harbor container registry"""
+        """Scan Harbor container registry and match with running containers"""
         logger.info("Scanning Harbor registry...")
+        ext = self.analysis_data['external_sources']['harbor']
+
         if not self.config['harbor']['url']:
-            logger.warning("Harbor URL not configured, skipping...")
+            ext['error'] = 'Harbor URL not configured in .env'
+            logger.warning("Harbor not configured - set HARBOR_URL, HARBOR_USERNAME, HARBOR_PASSWORD in .env")
             return {}
-        connector = HarborConnector(
-            self.config['harbor']['url'],
-            self.config['harbor']['username'],
-            self.config['harbor']['password']
-        )
-        self.analysis_data['harbor'] = connector.scan_registry()
+
+        ext['configured'] = True
+
+        try:
+            connector = HarborConnector(
+                self.config['harbor']['url'],
+                self.config['harbor']['username'],
+                self.config['harbor']['password']
+            )
+            self.analysis_data['harbor'] = connector.scan_registry()
+            ext['connected'] = True
+
+            if self.analysis_data['harbor'].get('repositories'):
+                ext['data_collected'] = True
+                # Match running containers with Harbor images
+                self._match_containers_to_registry(connector)
+
+        except Exception as e:
+            ext['error'] = str(e)
+            logger.error(f"Harbor connection failed: {e}")
+
         return self.analysis_data['harbor']
+
+    def _match_containers_to_registry(self, harbor: HarborConnector):
+        """Match running Docker containers with Harbor registry images"""
+        matches = []
+
+        # Get running Docker containers from process analysis
+        processes = self.analysis_data.get('processes', {}).get('running', [])
+        docker_processes = [p for p in processes if 'docker' in p.get('cmdline', '').lower()
+                           or 'containerd' in p.get('name', '').lower()]
+
+        # Check if we found docker info in history
+        history_cmds = self.analysis_data.get('history', {}).get('commands', [])
+        docker_cmds = [c for c in history_cmds if 'docker' in c.get('command', '').lower()]
+
+        # Extract image names from docker commands
+        image_names = set()
+        for cmd in docker_cmds:
+            cmd_str = cmd.get('command', '')
+            # Look for docker run/pull commands
+            if 'docker run' in cmd_str or 'docker pull' in cmd_str:
+                # Extract image name (simplified parsing)
+                parts = cmd_str.split()
+                for i, part in enumerate(parts):
+                    if part in ['run', 'pull'] and i + 1 < len(parts):
+                        img = parts[i + 1]
+                        if not img.startswith('-'):
+                            image_names.add(img.split(':')[0])  # Remove tag
+
+        # Match with Harbor artifacts
+        for artifact in self.analysis_data['harbor'].get('artifacts', []):
+            repo_name = artifact.get('repository', '')
+            for img_name in image_names:
+                if img_name in repo_name or repo_name.endswith(img_name):
+                    matches.append({
+                        'type': 'container_image_match',
+                        'local_image': img_name,
+                        'harbor_repo': repo_name,
+                        'tags': artifact.get('tags', []),
+                        'vulnerabilities': artifact.get('vulnerabilities', {}),
+                        'match_reason': f"Running container '{img_name}' found in Harbor"
+                    })
+
+        # Also check for hostname-related images
+        hostname = self.analysis_data.get('hostname', '')
+        related_images = harbor.find_images_for_hostname(hostname)
+        for img in related_images:
+            matches.append({
+                'type': 'hostname_related_image',
+                'harbor_repo': img.get('repository', ''),
+                'tags': img.get('tags', []),
+                'match_reason': f"Harbor image references hostname '{hostname}'"
+            })
+
+        self.analysis_data['container_registry_matches'] = matches
 
     def analyze_virtualization(self) -> dict:
         """Analyze virtualization platform (vCenter or Proxmox)"""
         logger.info("Analyzing virtualization platform...")
+        hostname = self.analysis_data.get('hostname', '')
 
+        # Try vCenter
         if self.config['vcenter']['host']:
-            connector = VCenterConnector(
-                self.config['vcenter']['host'],
-                self.config['vcenter']['username'],
-                self.config['vcenter']['password']
-            )
-            self.analysis_data['virtualization'] = {
-                'platform': 'vcenter',
-                'data': connector.get_vm_info()
-            }
-        elif self.config['proxmox']['host']:
-            connector = ProxmoxConnector(
-                self.config['proxmox']['host'],
-                self.config['proxmox']['username'],
-                self.config['proxmox']['password']
-            )
-            self.analysis_data['virtualization'] = {
-                'platform': 'proxmox',
-                'data': connector.get_vm_info()
-            }
-        else:
-            logger.warning("No virtualization platform configured, skipping...")
+            ext = self.analysis_data['external_sources']['vcenter']
+            ext['configured'] = True
 
-        return self.analysis_data['virtualization']
+            try:
+                connector = VCenterConnector(
+                    self.config['vcenter']['host'],
+                    self.config['vcenter']['username'],
+                    self.config['vcenter']['password']
+                )
+                vm_data = connector.get_vm_info()
+                ext['connected'] = True
+
+                if vm_data:
+                    ext['data_collected'] = True
+                    # Find this VM's info
+                    vm_info = connector.find_vm_by_name(hostname) if hasattr(connector, 'find_vm_by_name') else None
+                    self.analysis_data['virtualization'] = {
+                        'platform': 'vcenter',
+                        'data': vm_data,
+                        'this_vm': vm_info
+                    }
+            except Exception as e:
+                ext['error'] = str(e)
+                logger.error(f"vCenter connection failed: {e}")
+
+        # Try Proxmox
+        elif self.config['proxmox']['host']:
+            ext = self.analysis_data['external_sources']['proxmox']
+            ext['configured'] = True
+
+            try:
+                connector = ProxmoxConnector(
+                    self.config['proxmox']['host'],
+                    self.config['proxmox']['username'],
+                    self.config['proxmox']['password']
+                )
+                vm_data = connector.get_vm_info()
+                ext['connected'] = True
+
+                if vm_data:
+                    ext['data_collected'] = True
+                    # Find this VM's info
+                    vm_info = connector.find_vm_by_name(hostname) if hasattr(connector, 'find_vm_by_name') else None
+                    self.analysis_data['virtualization'] = {
+                        'platform': 'proxmox',
+                        'data': vm_data,
+                        'this_vm': vm_info
+                    }
+            except Exception as e:
+                ext['error'] = str(e)
+                logger.error(f"Proxmox connection failed: {e}")
+        else:
+            self.analysis_data['external_sources']['vcenter']['error'] = 'Not configured in .env'
+            self.analysis_data['external_sources']['proxmox']['error'] = 'Not configured in .env'
+            logger.warning("No virtualization platform configured - set VCENTER_* or PROXMOX_* in .env")
+
+        return self.analysis_data.get('virtualization', {})
 
     def generate_summary(self) -> dict:
         """Generate a summary of the system analysis"""
