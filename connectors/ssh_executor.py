@@ -3,21 +3,25 @@ SSH Executor
 Handles SSH connections to remote servers for system analysis
 """
 
+from __future__ import annotations
+
 import logging
 import os
-import io
 import socket
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
+PARAMIKO_AVAILABLE = False
+paramiko = None
+
 try:
-    import paramiko
+    import paramiko as _paramiko
+    paramiko = _paramiko
     PARAMIKO_AVAILABLE = True
 except ImportError:
-    PARAMIKO_AVAILABLE = False
-    logger.warning("paramiko not available - install with: pip install paramiko")
+    pass
 
 
 @dataclass
@@ -38,17 +42,19 @@ class SSHExecutor:
     """Executes commands on remote servers via SSH"""
 
     def __init__(self, config: SSHConfig):
+        if not PARAMIKO_AVAILABLE:
+            raise RuntimeError(
+                "paramiko library required for SSH connections.\n"
+                "Install with: pip3 install paramiko"
+            )
         self.config = config
-        self.client: Optional[paramiko.SSHClient] = None
+        self.client = None
         self.connected = False
         self._sudo_tested = False
         self._can_sudo = False
 
     def connect(self) -> bool:
         """Establish SSH connection to the remote server"""
-        if not PARAMIKO_AVAILABLE:
-            raise RuntimeError("paramiko library required for SSH connections. Install with: pip install paramiko")
-
         try:
             self.client = paramiko.SSHClient()
             self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -100,7 +106,7 @@ class SSHExecutor:
             logger.error(f"Failed to connect to {self.config.hostname}: {e}")
             return False
 
-    def _load_private_key(self, key_path: str) -> paramiko.PKey:
+    def _load_private_key(self, key_path: str):
         """Load private key, trying different formats"""
         passphrase = self.config.private_key_passphrase
 

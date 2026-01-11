@@ -488,16 +488,16 @@ def main():
         epilog="""
 Examples:
   # Analyze a remote server
-  python analyzer.py -H server.example.com -u ubuntu -k ~/.ssh/id_rsa
+  python3 analyzer.py -H server.example.com -u ubuntu -k ~/.ssh/id_rsa
 
   # Analyze with sudo password
-  python analyzer.py -H server.example.com -u admin -k ~/.ssh/id_rsa --sudo-pass
+  python3 analyzer.py -H server.example.com -u admin -k ~/.ssh/id_rsa --sudo-pass
 
   # Batch process from CSV
-  python batch_processor.py servers.csv -k ~/.ssh/id_rsa
+  python3 batch_processor.py servers.csv -k ~/.ssh/id_rsa
 
   # Generate CSV template
-  python batch_processor.py --template
+  python3 batch_processor.py --template
         """
     )
 
