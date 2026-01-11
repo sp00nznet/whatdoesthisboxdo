@@ -485,6 +485,342 @@ class RemoteHistoryAnalyzer:
         self.data['config_changes'] = [c for c in config_changes if c['command'] not in seen and not seen.add(c['command'])]
 
 
+class RemoteSecretsAnalyzer:
+    """Analyzes private keys and GPG keyrings on a remote system via SSH"""
+
+    def __init__(self, ssh: SSHExecutor):
+        self.ssh = ssh
+        self.data = {
+            'ssh_keys': [],
+            'gpg_keyrings': [],
+            'other_keys': [],
+            'authorized_keys': [],
+            'known_hosts': []
+        }
+
+    def analyze(self) -> Dict[str, Any]:
+        """Run full secrets analysis on remote system"""
+        self._find_ssh_keys()
+        self._find_gpg_keyrings()
+        self._find_other_keys()
+        self._get_authorized_keys()
+        self._get_known_hosts()
+        return self.data
+
+    def _find_ssh_keys(self) -> List[Dict]:
+        """Find SSH private keys on the system"""
+        keys = []
+
+        # Common SSH key locations
+        key_patterns = [
+            '/root/.ssh/id_*',
+            '/home/*/.ssh/id_*',
+            '/etc/ssh/ssh_host_*_key',
+        ]
+
+        # Find private keys
+        exit_code, stdout, _ = self.ssh.execute(
+            "find /root/.ssh /home/*/.ssh /etc/ssh -name 'id_*' -o -name 'ssh_host_*_key' 2>/dev/null | grep -v '.pub$'",
+            use_sudo=True
+        )
+
+        if exit_code == 0 and stdout.strip():
+            for key_path in stdout.strip().split('\n'):
+                if key_path and not key_path.endswith('.pub'):
+                    key_info = self._get_key_info(key_path)
+                    if key_info:
+                        keys.append(key_info)
+
+        # Also search for keys by content pattern
+        exit_code, stdout, _ = self.ssh.execute(
+            "grep -rl 'PRIVATE KEY' /root/.ssh /home/*/.ssh /etc/ssh 2>/dev/null | head -20",
+            use_sudo=True
+        )
+
+        if exit_code == 0 and stdout.strip():
+            for key_path in stdout.strip().split('\n'):
+                if key_path and not any(k['path'] == key_path for k in keys):
+                    key_info = self._get_key_info(key_path)
+                    if key_info:
+                        keys.append(key_info)
+
+        self.data['ssh_keys'] = keys
+        return keys
+
+    def _get_key_info(self, path: str) -> Optional[Dict]:
+        """Get information about a key file"""
+        exit_code, stdout, _ = self.ssh.execute(
+            f"ls -la '{path}' 2>/dev/null && head -1 '{path}' 2>/dev/null",
+            use_sudo=True
+        )
+
+        if exit_code != 0:
+            return None
+
+        lines = stdout.strip().split('\n')
+        if not lines:
+            return None
+
+        # Parse ls output
+        ls_parts = lines[0].split()
+        if len(ls_parts) < 9:
+            return None
+
+        key_type = 'unknown'
+        if len(lines) > 1:
+            header = lines[1]
+            if 'RSA' in header:
+                key_type = 'RSA'
+            elif 'EC' in header or 'ECDSA' in header:
+                key_type = 'ECDSA'
+            elif 'ED25519' in header or 'OPENSSH' in header:
+                key_type = 'ED25519'
+            elif 'DSA' in header:
+                key_type = 'DSA'
+            elif 'ENCRYPTED' in header:
+                key_type = 'encrypted'
+
+        # Check if key has a passphrase (encrypted)
+        encrypted = 'ENCRYPTED' in stdout
+
+        # Determine owner from path
+        if path.startswith('/root/'):
+            owner = 'root'
+        elif path.startswith('/home/'):
+            owner = path.split('/')[2]
+        elif path.startswith('/etc/ssh'):
+            owner = 'system (host key)'
+        else:
+            owner = ls_parts[2]
+
+        # Check for corresponding .pub file
+        has_pub = False
+        exit_code, _, _ = self.ssh.execute(f"test -f '{path}.pub'", use_sudo=True)
+        if exit_code == 0:
+            has_pub = True
+
+        return {
+            'path': path,
+            'type': key_type,
+            'owner': owner,
+            'permissions': ls_parts[0],
+            'encrypted': encrypted,
+            'has_public_key': has_pub,
+            'is_host_key': '/etc/ssh' in path
+        }
+
+    def _find_gpg_keyrings(self) -> List[Dict]:
+        """Find GPG keyrings on the system"""
+        keyrings = []
+
+        # Find GPG directories
+        exit_code, stdout, _ = self.ssh.execute(
+            "find /root /home -name '.gnupg' -type d 2>/dev/null",
+            use_sudo=True
+        )
+
+        if exit_code == 0 and stdout.strip():
+            for gpg_dir in stdout.strip().split('\n'):
+                if gpg_dir:
+                    keyring_info = self._get_gpg_info(gpg_dir)
+                    if keyring_info:
+                        keyrings.append(keyring_info)
+
+        self.data['gpg_keyrings'] = keyrings
+        return keyrings
+
+    def _get_gpg_info(self, gpg_dir: str) -> Optional[Dict]:
+        """Get information about a GPG keyring"""
+        # Get owner from path
+        if gpg_dir.startswith('/root/'):
+            owner = 'root'
+        elif gpg_dir.startswith('/home/'):
+            owner = gpg_dir.split('/')[2]
+        else:
+            owner = 'unknown'
+
+        # List keys in the keyring
+        exit_code, stdout, _ = self.ssh.execute(
+            f"GNUPGHOME='{gpg_dir}' gpg --list-keys --keyid-format SHORT 2>/dev/null | head -50",
+            use_sudo=True
+        )
+
+        public_keys = []
+        if exit_code == 0 and stdout.strip():
+            # Parse GPG output
+            current_key = None
+            for line in stdout.strip().split('\n'):
+                if line.startswith('pub'):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        current_key = {'id': parts[1], 'type': 'public'}
+                elif line.startswith('uid') and current_key:
+                    uid = line.replace('uid', '').strip()
+                    # Remove trust level markers like [ultimate]
+                    uid = re.sub(r'\[.*?\]', '', uid).strip()
+                    current_key['uid'] = uid
+                    public_keys.append(current_key)
+                    current_key = None
+
+        # List secret keys
+        exit_code, stdout, _ = self.ssh.execute(
+            f"GNUPGHOME='{gpg_dir}' gpg --list-secret-keys --keyid-format SHORT 2>/dev/null | head -50",
+            use_sudo=True
+        )
+
+        secret_keys = []
+        if exit_code == 0 and stdout.strip():
+            current_key = None
+            for line in stdout.strip().split('\n'):
+                if line.startswith('sec'):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        current_key = {'id': parts[1], 'type': 'secret'}
+                elif line.startswith('uid') and current_key:
+                    uid = line.replace('uid', '').strip()
+                    uid = re.sub(r'\[.*?\]', '', uid).strip()
+                    current_key['uid'] = uid
+                    secret_keys.append(current_key)
+                    current_key = None
+
+        # Get directory size
+        exit_code, stdout, _ = self.ssh.execute(
+            f"du -sh '{gpg_dir}' 2>/dev/null",
+            use_sudo=True
+        )
+        size = stdout.split()[0] if exit_code == 0 and stdout.strip() else 'unknown'
+
+        return {
+            'path': gpg_dir,
+            'owner': owner,
+            'size': size,
+            'public_keys': public_keys,
+            'secret_keys': secret_keys,
+            'key_count': len(public_keys),
+            'secret_key_count': len(secret_keys)
+        }
+
+    def _find_other_keys(self) -> List[Dict]:
+        """Find other key/certificate files"""
+        keys = []
+
+        # Search for PEM, key, and certificate files in common locations
+        exit_code, stdout, _ = self.ssh.execute(
+            "find /etc/ssl /etc/pki /opt -type f \\( -name '*.pem' -o -name '*.key' -o -name '*.crt' \\) 2>/dev/null | head -30",
+            use_sudo=True
+        )
+
+        if exit_code == 0 and stdout.strip():
+            for path in stdout.strip().split('\n'):
+                if path:
+                    # Check if it's a private key
+                    exit_code, content, _ = self.ssh.execute(
+                        f"head -1 '{path}' 2>/dev/null",
+                        use_sudo=True
+                    )
+                    if exit_code == 0 and content.strip():
+                        is_private = 'PRIVATE' in content
+                        is_cert = 'CERTIFICATE' in content
+
+                        keys.append({
+                            'path': path,
+                            'is_private_key': is_private,
+                            'is_certificate': is_cert,
+                            'type': 'private_key' if is_private else 'certificate' if is_cert else 'unknown'
+                        })
+
+        self.data['other_keys'] = keys
+        return keys
+
+    def _get_authorized_keys(self) -> List[Dict]:
+        """Get authorized_keys information"""
+        auth_keys = []
+
+        # Find all authorized_keys files
+        exit_code, stdout, _ = self.ssh.execute(
+            "find /root/.ssh /home/*/.ssh -name 'authorized_keys' 2>/dev/null",
+            use_sudo=True
+        )
+
+        if exit_code == 0 and stdout.strip():
+            for auth_file in stdout.strip().split('\n'):
+                if auth_file:
+                    exit_code, content, _ = self.ssh.execute(
+                        f"wc -l < '{auth_file}' && cat '{auth_file}' 2>/dev/null",
+                        use_sudo=True
+                    )
+
+                    if exit_code == 0 and content.strip():
+                        lines = content.strip().split('\n')
+                        key_count = int(lines[0]) if lines[0].isdigit() else 0
+
+                        # Parse key comments/identifiers
+                        key_ids = []
+                        for line in lines[1:]:
+                            if line.strip() and not line.startswith('#'):
+                                parts = line.strip().split()
+                                if len(parts) >= 3:
+                                    key_ids.append(parts[-1])  # Usually the comment/email
+                                elif len(parts) == 2:
+                                    key_ids.append(parts[0][:20] + '...')  # Key type abbreviated
+
+                        # Determine owner from path
+                        if auth_file.startswith('/root/'):
+                            owner = 'root'
+                        elif auth_file.startswith('/home/'):
+                            owner = auth_file.split('/')[2]
+                        else:
+                            owner = 'unknown'
+
+                        auth_keys.append({
+                            'path': auth_file,
+                            'owner': owner,
+                            'key_count': key_count,
+                            'key_identifiers': key_ids[:10]  # Limit to 10
+                        })
+
+        self.data['authorized_keys'] = auth_keys
+        return auth_keys
+
+    def _get_known_hosts(self) -> List[Dict]:
+        """Get known_hosts summary"""
+        known = []
+
+        # Find all known_hosts files
+        exit_code, stdout, _ = self.ssh.execute(
+            "find /root/.ssh /home/*/.ssh -name 'known_hosts' 2>/dev/null",
+            use_sudo=True
+        )
+
+        if exit_code == 0 and stdout.strip():
+            for kh_file in stdout.strip().split('\n'):
+                if kh_file:
+                    exit_code, content, _ = self.ssh.execute(
+                        f"wc -l < '{kh_file}'",
+                        use_sudo=True
+                    )
+
+                    if exit_code == 0 and content.strip():
+                        host_count = int(content.strip()) if content.strip().isdigit() else 0
+
+                        # Determine owner from path
+                        if kh_file.startswith('/root/'):
+                            owner = 'root'
+                        elif kh_file.startswith('/home/'):
+                            owner = kh_file.split('/')[2]
+                        else:
+                            owner = 'unknown'
+
+                        known.append({
+                            'path': kh_file,
+                            'owner': owner,
+                            'host_count': host_count
+                        })
+
+        self.data['known_hosts'] = known
+        return known
+
+
 class RemoteSystemAnalyzer:
     """Orchestrates all remote analysis"""
 
@@ -501,7 +837,8 @@ class RemoteSystemAnalyzer:
             'os_info': self.ssh.get_os_info(),
             'processes': {},
             'files': {},
-            'history': {}
+            'history': {},
+            'secrets': {}
         }
 
         # Process analysis
@@ -518,6 +855,11 @@ class RemoteSystemAnalyzer:
         logger.info("Analyzing bash histories...")
         history_analyzer = RemoteHistoryAnalyzer(self.ssh, users)
         data['history'] = history_analyzer.analyze()
+
+        # Secrets analysis (SSH keys, GPG keyrings)
+        logger.info("Analyzing SSH keys and GPG keyrings...")
+        secrets_analyzer = RemoteSecretsAnalyzer(self.ssh)
+        data['secrets'] = secrets_analyzer.analyze()
 
         logger.info(f"Analysis of {self.hostname} complete")
         return data

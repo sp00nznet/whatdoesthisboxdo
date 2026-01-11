@@ -26,16 +26,20 @@ class DocumentationGenerator:
         doc = self._generate_header()
         doc += self._generate_executive_summary()
         doc += self._generate_system_identity()
+        doc += self._generate_external_sources_section()
+        doc += self._generate_gitlab_findings()
+        doc += self._generate_harbor_findings()
+        doc += self._generate_virtualization_findings()
         doc += self._generate_health_assessment()
         doc += self._generate_metrics_section()
         doc += self._generate_services_section()
         doc += self._generate_network_section()
         doc += self._generate_storage_section()
+        doc += self._generate_secrets_section()
         doc += self._generate_security_assessment()
         doc += self._generate_configuration_section()
         doc += self._generate_dependencies_section()
         doc += self._generate_recommendations()
-        doc += self._generate_troubleshooting_section()
         doc += self._generate_footer()
 
         with open(output_path, 'w') as f:
@@ -250,6 +254,193 @@ class DocumentationGenerator:
 ```
 
 """
+        return doc
+
+    def _generate_external_sources_section(self) -> str:
+        """Generate external sources status section"""
+        sources = self.data.get('external_sources', {})
+
+        if not sources:
+            return ""
+
+        doc = """## External Data Sources
+
+| Source | Status | Details |
+|--------|--------|---------|
+"""
+        source_names = {
+            'gitlab': 'GitLab',
+            'harbor': 'Harbor Registry',
+            'vcenter': 'vCenter/vSphere',
+            'proxmox': 'Proxmox'
+        }
+
+        for key, name in source_names.items():
+            info = sources.get(key, {})
+            if info.get('data_collected'):
+                status = "Connected"
+                details = "Data collected successfully"
+            elif info.get('connected'):
+                status = "Connected"
+                details = "Connected but no relevant data found"
+            elif info.get('configured'):
+                status = "Failed"
+                details = info.get('error', 'Connection failed')
+            else:
+                status = "Not Configured"
+                details = f"Set credentials in .env file"
+
+            doc += f"| {name} | {status} | {details} |\n"
+
+        doc += "\n"
+
+        # Add note about configuring sources
+        unconfigured = [name for key, name in source_names.items()
+                       if not sources.get(key, {}).get('configured')]
+        if unconfigured:
+            doc += f"""> **Note:** To enable {', '.join(unconfigured)}, configure credentials in `.env` file.
+> See `.env.example` for required variables.
+
+"""
+        return doc
+
+    def _generate_gitlab_findings(self) -> str:
+        """Generate GitLab findings section"""
+        gitlab = self.data.get('gitlab', {})
+        matches = self.data.get('path_repo_matches', [])
+        ext = self.data.get('external_sources', {}).get('gitlab', {})
+
+        if not ext.get('data_collected'):
+            return ""
+
+        doc = """## GitLab Repository Analysis
+
+"""
+        if matches:
+            doc += """### Related Repositories Found
+
+| Repository | Match Type | Reason |
+|------------|------------|--------|
+"""
+            for match in matches[:15]:
+                doc += f"| `{match.get('project', 'N/A')}` | {match.get('type', 'N/A')} | {match.get('match_reason', '')} |\n"
+            doc += "\n"
+
+            # Show URLs
+            doc += "**Repository Links:**\n\n"
+            seen_urls = set()
+            for match in matches[:10]:
+                url = match.get('url', '')
+                if url and url not in seen_urls:
+                    doc += f"- {url}\n"
+                    seen_urls.add(url)
+            doc += "\n"
+        else:
+            doc += "> No GitLab repositories found matching this server's hostname or configuration.\n\n"
+
+        # Show relevant CI/CD configs
+        configs = gitlab.get('related_configs', [])
+        if configs:
+            doc += """### Infrastructure-as-Code Found
+
+| Project | File |
+|---------|------|
+"""
+            for cfg in configs[:10]:
+                doc += f"| `{cfg.get('project', '')}` | `{cfg.get('file', '')}` |\n"
+            doc += "\n"
+
+        # Show recent deployments
+        deployments = gitlab.get('deployments', [])
+        if deployments:
+            doc += """### Recent Deployments
+
+| Project | Environment | URL |
+|---------|-------------|-----|
+"""
+            for dep in deployments[:10]:
+                doc += f"| `{dep.get('project', '')}` | {dep.get('environment', '')} | {dep.get('external_url', 'N/A')} |\n"
+            doc += "\n"
+
+        return doc
+
+    def _generate_harbor_findings(self) -> str:
+        """Generate Harbor findings section"""
+        harbor = self.data.get('harbor', {})
+        matches = self.data.get('container_registry_matches', [])
+        ext = self.data.get('external_sources', {}).get('harbor', {})
+
+        if not ext.get('data_collected'):
+            return ""
+
+        doc = """## Harbor Container Registry Analysis
+
+"""
+        if matches:
+            doc += """### Container Image Matches
+
+| Local Image | Harbor Repository | Tags | Vulnerabilities |
+|-------------|-------------------|------|-----------------|
+"""
+            for match in matches[:15]:
+                vulns = match.get('vulnerabilities', {})
+                vuln_str = f"C:{vulns.get('critical', 0)} H:{vulns.get('high', 0)}" if vulns else "N/A"
+                tags = ', '.join(match.get('tags', [])[:3]) or 'N/A'
+                doc += f"| `{match.get('local_image', 'N/A')}` | `{match.get('harbor_repo', '')}` | {tags} | {vuln_str} |\n"
+            doc += "\n"
+        else:
+            doc += "> No Harbor images found matching running containers on this server.\n\n"
+
+        # Show summary stats
+        projects = harbor.get('projects', [])
+        repos = harbor.get('repositories', [])
+        if projects:
+            doc += f"""### Registry Summary
+
+- **Projects:** {len(projects)}
+- **Repositories:** {len(repos)}
+
+"""
+        return doc
+
+    def _generate_virtualization_findings(self) -> str:
+        """Generate virtualization findings section"""
+        virt = self.data.get('virtualization', {})
+        ext_vcenter = self.data.get('external_sources', {}).get('vcenter', {})
+        ext_proxmox = self.data.get('external_sources', {}).get('proxmox', {})
+
+        if not ext_vcenter.get('data_collected') and not ext_proxmox.get('data_collected'):
+            return ""
+
+        platform = virt.get('platform', 'unknown').title()
+        this_vm = virt.get('this_vm', {})
+
+        doc = f"""## {platform} VM Information
+
+"""
+        if this_vm:
+            doc += """### This VM's Configuration
+
+| Property | Value |
+|----------|-------|
+"""
+            for key, value in this_vm.items():
+                if key not in ['id', 'uuid'] and value:
+                    doc += f"| {key.replace('_', ' ').title()} | {value} |\n"
+            doc += "\n"
+        else:
+            doc += f"> VM details for this hostname not found in {platform}.\n\n"
+
+        # Show cluster/host info if available
+        data = virt.get('data', {})
+        if isinstance(data, dict):
+            if data.get('cluster'):
+                doc += f"**Cluster:** {data.get('cluster')}\n\n"
+            if data.get('host'):
+                doc += f"**Host:** {data.get('host')}\n\n"
+            if data.get('datastore'):
+                doc += f"**Datastore:** {data.get('datastore')}\n\n"
+
         return doc
 
     def _generate_health_assessment(self) -> str:
@@ -594,6 +785,108 @@ class DocumentationGenerator:
 
         return doc
 
+    def _generate_secrets_section(self) -> str:
+        """Generate SSH keys and GPG keyrings section"""
+        secrets = self.data.get('secrets', {})
+
+        if not secrets:
+            return ""
+
+        ssh_keys = secrets.get('ssh_keys', [])
+        gpg_keyrings = secrets.get('gpg_keyrings', [])
+        other_keys = secrets.get('other_keys', [])
+        authorized_keys = secrets.get('authorized_keys', [])
+        known_hosts = secrets.get('known_hosts', [])
+
+        # Only show section if we found something
+        if not any([ssh_keys, gpg_keyrings, other_keys, authorized_keys]):
+            return ""
+
+        doc = """## SSH Keys & Credentials
+
+"""
+        # SSH Private Keys
+        if ssh_keys:
+            user_keys = [k for k in ssh_keys if not k.get('is_host_key')]
+            host_keys = [k for k in ssh_keys if k.get('is_host_key')]
+
+            if user_keys:
+                doc += """### User SSH Private Keys
+
+| Path | Type | Owner | Encrypted | Has .pub |
+|------|------|-------|-----------|----------|
+"""
+                for key in user_keys:
+                    encrypted = "Yes" if key.get('encrypted') else "**No**"
+                    has_pub = "Yes" if key.get('has_public_key') else "No"
+                    doc += f"| `{key.get('path', 'N/A')}` | {key.get('type', 'unknown')} | {key.get('owner', 'N/A')} | {encrypted} | {has_pub} |\n"
+                doc += "\n"
+
+                # Warning for unencrypted keys
+                unencrypted = [k for k in user_keys if not k.get('encrypted')]
+                if unencrypted:
+                    doc += f"> **Warning:** {len(unencrypted)} private key(s) are not passphrase protected.\n\n"
+
+            if host_keys:
+                doc += f"**System Host Keys:** {len(host_keys)} host keys in `/etc/ssh/`\n\n"
+
+        # Authorized Keys
+        if authorized_keys:
+            doc += """### Authorized Keys (SSH Access)
+
+| User | Keys | Identifiers |
+|------|------|-------------|
+"""
+            for auth in authorized_keys:
+                identifiers = ', '.join(auth.get('key_identifiers', [])[:3])
+                if len(auth.get('key_identifiers', [])) > 3:
+                    identifiers += '...'
+                doc += f"| {auth.get('owner', 'N/A')} | {auth.get('key_count', 0)} | {identifiers or 'N/A'} |\n"
+            doc += "\n"
+
+        # Known Hosts
+        if known_hosts:
+            total_hosts = sum(kh.get('host_count', 0) for kh in known_hosts)
+            doc += f"**Known Hosts:** {total_hosts} hosts across {len(known_hosts)} user(s)\n\n"
+
+        # GPG Keyrings
+        if gpg_keyrings:
+            doc += """### GPG Keyrings
+
+| Owner | Path | Public Keys | Secret Keys | Size |
+|-------|------|-------------|-------------|------|
+"""
+            for keyring in gpg_keyrings:
+                doc += f"| {keyring.get('owner', 'N/A')} | `{keyring.get('path', 'N/A')}` | {keyring.get('key_count', 0)} | {keyring.get('secret_key_count', 0)} | {keyring.get('size', 'N/A')} |\n"
+            doc += "\n"
+
+            # List GPG key identities
+            for keyring in gpg_keyrings:
+                secret_keys = keyring.get('secret_keys', [])
+                if secret_keys:
+                    doc += f"**{keyring.get('owner', 'Unknown')}'s GPG Identities:**\n\n"
+                    for key in secret_keys[:5]:
+                        doc += f"- `{key.get('id', 'N/A')}` - {key.get('uid', 'No UID')}\n"
+                    if len(secret_keys) > 5:
+                        doc += f"- *...and {len(secret_keys) - 5} more*\n"
+                    doc += "\n"
+
+        # Other Keys/Certificates
+        private_keys = [k for k in other_keys if k.get('is_private_key')]
+        if private_keys:
+            doc += """### Other Private Keys/Certificates
+
+| Path | Type |
+|------|------|
+"""
+            for key in private_keys[:10]:
+                doc += f"| `{key.get('path', 'N/A')}` | {key.get('type', 'unknown')} |\n"
+            if len(private_keys) > 10:
+                doc += f"\n*...and {len(private_keys) - 10} more key files*\n"
+            doc += "\n"
+
+        return doc
+
     def _generate_security_assessment(self) -> str:
         """Generate security assessment section"""
         services = self.data.get('processes', {}).get('services', [])
@@ -787,86 +1080,6 @@ Based on the analysis, here are our recommendations:
             doc += f"{i}. {rec}\n"
 
         doc += "\n"
-        return doc
-
-    def _generate_troubleshooting_section(self) -> str:
-        """Generate troubleshooting section"""
-        role = self._determine_server_role()
-
-        doc = """## Troubleshooting Guide
-
-### Common Commands
-
-"""
-        doc += """```bash
-# Check system resources
-htop                          # Interactive process viewer
-free -h                       # Memory usage
-df -h                         # Disk usage
-iostat -x 1                   # I/O statistics
-
-# Check logs
-journalctl -xe                # Recent system logs
-journalctl -u <service>       # Service-specific logs
-tail -f /var/log/syslog       # Live system log
-
-# Network diagnostics
-ss -tuln                      # Listening ports
-netstat -an                   # All connections
-tcpdump -i any port <port>    # Packet capture
-```
-
-"""
-        # Role-specific troubleshooting
-        role_type = role.get('role_type', '')
-
-        if 'Web Server' in role_type:
-            doc += """### Web Server Troubleshooting
-
-```bash
-# Nginx
-nginx -t                      # Test configuration
-systemctl status nginx        # Service status
-tail -f /var/log/nginx/error.log
-
-# Apache
-apache2ctl configtest
-systemctl status apache2
-tail -f /var/log/apache2/error.log
-```
-
-"""
-
-        if 'Database' in role_type:
-            doc += """### Database Troubleshooting
-
-```bash
-# MySQL/MariaDB
-mysqladmin status
-SHOW PROCESSLIST;             # In MySQL shell
-tail -f /var/log/mysql/error.log
-
-# PostgreSQL
-pg_isready
-SELECT * FROM pg_stat_activity;  # In psql
-tail -f /var/log/postgresql/postgresql-*-main.log
-```
-
-"""
-
-        if 'Container' in role_type or 'Docker' in role_type:
-            doc += """### Container Troubleshooting
-
-```bash
-docker ps -a                  # All containers
-docker logs <container>       # Container logs
-docker stats                  # Resource usage
-docker system df              # Disk usage
-docker inspect <container>    # Full container details
-```
-
-"""
-
         return doc
 
     def _generate_footer(self) -> str:

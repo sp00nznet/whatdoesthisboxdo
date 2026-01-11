@@ -174,6 +174,12 @@ output/
 | History | Setup commands from bash_history |
 | Network | Listening ports, active connections |
 | Storage | Disk usage, important directories |
+| SSH Keys | Private keys, authorized_keys, known_hosts |
+| GPG Keyrings | Public/secret keys, key identities |
+| Certificates | PEM/key files in /etc/ssl, /etc/pki |
+| GitLab | Repos matching hostname, IaC files, deployments |
+| Harbor | Container images matching running containers |
+| vCenter/Proxmox | VM configuration, cluster, resource allocation |
 
 ## What Gets Generated
 
@@ -189,11 +195,14 @@ output/
 ### Documentation Includes
 
 - **Executive Summary** - What does this server do? (with confidence score)
+- **External Sources Status** - GitLab, Harbor, vCenter/Proxmox connection status
+- **GitLab Analysis** - Related repos, IaC files, recent deployments
+- **Harbor Analysis** - Container images matched to running containers
 - **Health Assessment** - Score out of 100 with warnings and insights
+- **SSH Keys & Credentials** - Private keys, GPG keyrings, authorized access
 - **Security Checklist** - Firewall, exposed ports, fail2ban, etc.
 - **Resource Metrics** - CPU, memory, disk, network with assessments
 - **Service Opinions** - Analysis of running services with recommendations
-- **Troubleshooting Guide** - Role-specific commands and tips
 
 ## Command Reference
 
@@ -241,6 +250,26 @@ Options:
   --template           Generate a CSV template file
   -v, --verbose        Enable debug logging
 ```
+
+## External Data Sources
+
+Configure optional external sources in `.env` for enhanced analysis:
+
+```bash
+# Copy example and edit
+cp .env.example .env
+```
+
+### Supported Sources
+
+| Source | Purpose | Required Variables |
+|--------|---------|-------------------|
+| GitLab | Match paths to repos, find IaC | `GITLAB_URL`, `GITLAB_TOKEN` |
+| Harbor | Match containers to registry | `HARBOR_URL`, `HARBOR_USERNAME`, `HARBOR_PASSWORD` |
+| vCenter | VM configuration details | `VCENTER_HOST`, `VCENTER_USERNAME`, `VCENTER_PASSWORD` |
+| Proxmox | VM/container details | `PROXMOX_HOST`, `PROXMOX_USERNAME`, `PROXMOX_PASSWORD` |
+
+If credentials are not provided, the analysis will note which sources were unavailable.
 
 ## Requirements
 
