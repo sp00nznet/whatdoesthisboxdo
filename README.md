@@ -23,7 +23,9 @@ A remote system analysis tool that connects to servers via SSH, analyzes them, e
 ## Quick Start
 
 ```bash
-# Install
+# Create virtual environment and install dependencies
+python3 -m venv venv
+source venv/bin/activate
 pip3 install -r requirements.txt
 
 # Analyze a remote server
@@ -197,6 +199,9 @@ Options:
 ### Python Dependencies
 
 ```bash
+# Recommended: Use a virtual environment
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip3 install -r requirements.txt
 ```
 
