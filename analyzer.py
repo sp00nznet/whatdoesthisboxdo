@@ -17,6 +17,7 @@ from analyzers.process_analyzer import ProcessAnalyzer
 from analyzers.file_analyzer import FileAnalyzer
 from analyzers.history_analyzer import HistoryAnalyzer
 from analyzers.remote_analyzer import RemoteSystemAnalyzer
+from analyzers.metrics_monitor import MetricsMonitor
 from connectors.ssh_executor import SSHExecutor, SSHConfig
 from connectors.gitlab_connector import GitLabConnector
 from connectors.harbor_connector import HarborConnector
@@ -41,11 +42,12 @@ logger = logging.getLogger(__name__)
 class SystemAnalyzer:
     """Main system analyzer class that orchestrates all analysis and generation"""
 
-    def __init__(self, config_path: str = None, remote_config: SSHConfig = None):
+    def __init__(self, config_path: str = None, remote_config: SSHConfig = None, monitor_duration: int = 0):
         self.config = self._load_config(config_path)
         self.remote_config = remote_config
         self.ssh: SSHExecutor = None
         self.is_remote = remote_config is not None
+        self.monitor_duration = monitor_duration  # Duration in seconds for metrics collection
         self.analysis_data = {
             'timestamp': datetime.now().isoformat(),
             'hostname': os.uname().nodename,
@@ -55,7 +57,9 @@ class SystemAnalyzer:
             'gitlab': {},
             'harbor': {},
             'virtualization': {},
-            'summary': {}
+            'summary': {},
+            'metrics_analysis': {},
+            'monitoring_duration': monitor_duration
         }
 
     def _load_config(self, config_path: str) -> dict:
@@ -314,11 +318,33 @@ class SystemAnalyzer:
         logger.info(f"Starting remote analysis of {self.analysis_data['hostname']}...")
 
         try:
+            # Run metrics monitoring if duration is set
+            if self.monitor_duration > 0:
+                logger.info(f"Starting metrics collection for {self.monitor_duration} seconds...")
+                monitor = MetricsMonitor(self.ssh)
+
+                # Determine interval based on duration
+                if self.monitor_duration <= 30:
+                    interval = 3
+                elif self.monitor_duration <= 120:
+                    interval = 5
+                else:
+                    interval = 10
+
+                monitor.monitor(self.monitor_duration, interval)
+                self.analysis_data['metrics_analysis'] = monitor.get_analysis()
+                self.analysis_data['monitoring_duration'] = self.monitor_duration
+                logger.info("Metrics collection complete!")
+
             analyzer = RemoteSystemAnalyzer(self.ssh)
             remote_data = analyzer.analyze_all()
 
-            # Merge with analysis_data
+            # Merge with analysis_data (but preserve metrics_analysis)
+            metrics_backup = self.analysis_data.get('metrics_analysis', {})
+            monitoring_duration = self.analysis_data.get('monitoring_duration', 0)
             self.analysis_data.update(remote_data)
+            self.analysis_data['metrics_analysis'] = metrics_backup
+            self.analysis_data['monitoring_duration'] = monitoring_duration
             self.analysis_data['timestamp'] = datetime.now().isoformat()
 
             # Generate summary
@@ -493,14 +519,14 @@ Examples:
   # Analyze with SSH password (no key)
   python3 analyzer.py -H server.example.com -u admin --password
 
+  # Analyze with 60-second metrics monitoring
+  python3 analyzer.py -H server.example.com -u ubuntu -k ~/.ssh/id_rsa -m 60
+
   # Analyze with sudo password
   python3 analyzer.py -H server.example.com -u admin -k ~/.ssh/id_rsa --sudo-pass
 
   # Batch process from CSV
   python3 batch_processor.py servers.csv -k ~/.ssh/id_rsa
-
-  # Generate CSV template
-  python3 batch_processor.py --template
         """
     )
 
@@ -577,6 +603,13 @@ Examples:
         help='Only generate cost estimates'
     )
     parser.add_argument(
+        '-m', '--monitor',
+        type=int,
+        default=0,
+        metavar='SECONDS',
+        help='Collect metrics over specified duration (e.g., --monitor 60 for 1 minute)'
+    )
+    parser.add_argument(
         '-v', '--verbose',
         action='store_true',
         help='Enable verbose logging'
@@ -610,7 +643,7 @@ Examples:
             use_sudo=True
         )
 
-    analyzer = SystemAnalyzer(args.config, remote_config=remote_config)
+    analyzer = SystemAnalyzer(args.config, remote_config=remote_config, monitor_duration=args.monitor)
     analyzer.config['output_dir'] = args.output
 
     # Adjust output directory for remote hosts
