@@ -196,6 +196,16 @@ Options:
 - SSH private key access to target servers
 - Sudo access on target servers (for full analysis)
 
+### System Prerequisites (Debian/Ubuntu)
+
+```bash
+# Install python3-venv (required for virtual environment)
+sudo apt install python3-venv
+
+# Or for a specific Python version (e.g., 3.13)
+sudo apt install python3.13-venv
+```
+
 ### Python Dependencies
 
 ```bash
