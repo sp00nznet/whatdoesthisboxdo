@@ -35,6 +35,7 @@ class DocumentationGenerator:
         doc += self._generate_services_section()
         doc += self._generate_network_section()
         doc += self._generate_storage_section()
+        doc += self._generate_secrets_section()
         doc += self._generate_security_assessment()
         doc += self._generate_configuration_section()
         doc += self._generate_dependencies_section()
@@ -780,6 +781,108 @@ class DocumentationGenerator:
 
                 doc += f"| `{mount}` | {total_gb} GB | {used_gb} GB | {free_gb} GB | {status} |\n"
 
+            doc += "\n"
+
+        return doc
+
+    def _generate_secrets_section(self) -> str:
+        """Generate SSH keys and GPG keyrings section"""
+        secrets = self.data.get('secrets', {})
+
+        if not secrets:
+            return ""
+
+        ssh_keys = secrets.get('ssh_keys', [])
+        gpg_keyrings = secrets.get('gpg_keyrings', [])
+        other_keys = secrets.get('other_keys', [])
+        authorized_keys = secrets.get('authorized_keys', [])
+        known_hosts = secrets.get('known_hosts', [])
+
+        # Only show section if we found something
+        if not any([ssh_keys, gpg_keyrings, other_keys, authorized_keys]):
+            return ""
+
+        doc = """## SSH Keys & Credentials
+
+"""
+        # SSH Private Keys
+        if ssh_keys:
+            user_keys = [k for k in ssh_keys if not k.get('is_host_key')]
+            host_keys = [k for k in ssh_keys if k.get('is_host_key')]
+
+            if user_keys:
+                doc += """### User SSH Private Keys
+
+| Path | Type | Owner | Encrypted | Has .pub |
+|------|------|-------|-----------|----------|
+"""
+                for key in user_keys:
+                    encrypted = "Yes" if key.get('encrypted') else "**No**"
+                    has_pub = "Yes" if key.get('has_public_key') else "No"
+                    doc += f"| `{key.get('path', 'N/A')}` | {key.get('type', 'unknown')} | {key.get('owner', 'N/A')} | {encrypted} | {has_pub} |\n"
+                doc += "\n"
+
+                # Warning for unencrypted keys
+                unencrypted = [k for k in user_keys if not k.get('encrypted')]
+                if unencrypted:
+                    doc += f"> **Warning:** {len(unencrypted)} private key(s) are not passphrase protected.\n\n"
+
+            if host_keys:
+                doc += f"**System Host Keys:** {len(host_keys)} host keys in `/etc/ssh/`\n\n"
+
+        # Authorized Keys
+        if authorized_keys:
+            doc += """### Authorized Keys (SSH Access)
+
+| User | Keys | Identifiers |
+|------|------|-------------|
+"""
+            for auth in authorized_keys:
+                identifiers = ', '.join(auth.get('key_identifiers', [])[:3])
+                if len(auth.get('key_identifiers', [])) > 3:
+                    identifiers += '...'
+                doc += f"| {auth.get('owner', 'N/A')} | {auth.get('key_count', 0)} | {identifiers or 'N/A'} |\n"
+            doc += "\n"
+
+        # Known Hosts
+        if known_hosts:
+            total_hosts = sum(kh.get('host_count', 0) for kh in known_hosts)
+            doc += f"**Known Hosts:** {total_hosts} hosts across {len(known_hosts)} user(s)\n\n"
+
+        # GPG Keyrings
+        if gpg_keyrings:
+            doc += """### GPG Keyrings
+
+| Owner | Path | Public Keys | Secret Keys | Size |
+|-------|------|-------------|-------------|------|
+"""
+            for keyring in gpg_keyrings:
+                doc += f"| {keyring.get('owner', 'N/A')} | `{keyring.get('path', 'N/A')}` | {keyring.get('key_count', 0)} | {keyring.get('secret_key_count', 0)} | {keyring.get('size', 'N/A')} |\n"
+            doc += "\n"
+
+            # List GPG key identities
+            for keyring in gpg_keyrings:
+                secret_keys = keyring.get('secret_keys', [])
+                if secret_keys:
+                    doc += f"**{keyring.get('owner', 'Unknown')}'s GPG Identities:**\n\n"
+                    for key in secret_keys[:5]:
+                        doc += f"- `{key.get('id', 'N/A')}` - {key.get('uid', 'No UID')}\n"
+                    if len(secret_keys) > 5:
+                        doc += f"- *...and {len(secret_keys) - 5} more*\n"
+                    doc += "\n"
+
+        # Other Keys/Certificates
+        private_keys = [k for k in other_keys if k.get('is_private_key')]
+        if private_keys:
+            doc += """### Other Private Keys/Certificates
+
+| Path | Type |
+|------|------|
+"""
+            for key in private_keys[:10]:
+                doc += f"| `{key.get('path', 'N/A')}` | {key.get('type', 'unknown')} |\n"
+            if len(private_keys) > 10:
+                doc += f"\n*...and {len(private_keys) - 10} more key files*\n"
             doc += "\n"
 
         return doc
