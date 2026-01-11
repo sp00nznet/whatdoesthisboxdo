@@ -23,13 +23,15 @@ A remote system analysis tool that connects to servers via SSH, analyzes them, e
 ## Quick Start
 
 ```bash
-# Create virtual environment and install dependencies
-python3 -m venv venv
+# Run setup script (creates venv and installs dependencies)
+./setup.sh
 source venv/bin/activate
-pip3 install -r requirements.txt
 
-# Analyze a remote server
+# Analyze a remote server (with SSH key)
 python3 analyzer.py -H server.example.com -u ubuntu -k ~/.ssh/id_rsa
+
+# Analyze with password authentication
+python3 analyzer.py -H server.example.com -u admin --password
 
 # Batch analyze from CSV
 python3 batch_processor.py servers.csv -k ~/.ssh/id_rsa
@@ -60,11 +62,17 @@ python3 batch_processor.py servers.csv -k ~/.ssh/id_rsa
 ## Single Server Analysis
 
 ```bash
-# Basic remote analysis
+# Basic remote analysis (with SSH key)
 python3 analyzer.py -H 192.168.1.100 -u ubuntu -k ~/.ssh/id_rsa
+
+# With password authentication (no key needed)
+python3 analyzer.py -H 192.168.1.100 -u admin --password
 
 # With sudo password prompt
 python3 analyzer.py -H server.example.com -u admin -k ~/.ssh/id_rsa --sudo-pass
+
+# Password auth with sudo password
+python3 analyzer.py -H server.example.com -u admin --password --sudo-pass
 
 # Custom SSH port
 python3 analyzer.py -H server.example.com -u root -k ~/.ssh/id_rsa -p 2222
@@ -153,8 +161,8 @@ output/
 
 ```
 usage: analyzer.py [-h] [-H HOST] [-u USER] [-p PORT] [-k KEY] [--sudo-pass]
-                   [-c CONFIG] [-o OUTPUT] [--analyze-only] [--no-cloud]
-                   [--cloud-only] [--cost-only] [-v]
+                   [--password] [-c CONFIG] [-o OUTPUT] [--analyze-only]
+                   [--no-cloud] [--cloud-only] [--cost-only] [-v]
 
 Remote Connection:
   -H, --host HOST      Remote hostname or IP to analyze
@@ -162,6 +170,7 @@ Remote Connection:
   -p, --port PORT      SSH port (default: 22)
   -k, --key KEY        Path to SSH private key
   --sudo-pass          Prompt for sudo password
+  --password           Prompt for SSH password (instead of key)
 
 Options:
   -o, --output DIR     Output directory (default: output)
@@ -193,7 +202,7 @@ Options:
 ## Requirements
 
 - Python 3.8+
-- SSH private key access to target servers
+- SSH access to target servers (key or password)
 - Sudo access on target servers (for full analysis)
 
 ### System Prerequisites (Debian/Ubuntu)
