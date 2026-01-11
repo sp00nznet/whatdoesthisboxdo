@@ -5,6 +5,9 @@ psutil>=5.9.0
 requests>=2.28.0
 PyYAML>=6.0
 
+# SSH connectivity (required for remote analysis)
+paramiko>=3.0.0
+
 # vCenter integration (optional)
 pyvmomi>=8.0.0.1
 

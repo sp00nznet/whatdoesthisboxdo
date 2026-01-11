@@ -1,6 +1,6 @@
 # What Does This Box Do?
 
-> Analyze any server. Understand its purpose. Recreate it anywhere.
+> SSH into any server. Understand its purpose. Recreate it anywhere.
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.8+-blue.svg" alt="Python 3.8+">
@@ -18,7 +18,7 @@
 
 ---
 
-A system analysis tool that examines servers, estimates cloud costs, and generates Infrastructure-as-Code to recreate them on any platform.
+A remote system analysis tool that connects to servers via SSH, analyzes them, estimates cloud costs, and generates Infrastructure-as-Code to recreate them.
 
 ## Quick Start
 
@@ -26,111 +26,193 @@ A system analysis tool that examines servers, estimates cloud costs, and generat
 # Install
 pip install -r requirements.txt
 
-# Configure (optional)
-cp config.json.example config.json
+# Analyze a remote server
+python analyzer.py -H server.example.com -u ubuntu -k ~/.ssh/id_rsa
 
-# Run
-python analyzer.py
+# Batch analyze from CSV
+python batch_processor.py servers.csv -k ~/.ssh/id_rsa
 ```
 
-## What It Does
+## How It Works
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│   YOUR SERVER   │ ──▶ │  SYSTEM ANALYZER │ ──▶ │     OUTPUT      │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
-                                                         │
-         ┌───────────────────┬───────────────────┬───────┴───────┬───────────────────┐
-         │                   │                   │               │                   │
-         ▼                   ▼                   ▼               ▼                   ▼
-   ┌───────────┐       ┌───────────┐       ┌───────────┐   ┌───────────┐       ┌───────────┐
-   │    AWS    │       │    GCP    │       │   Azure   │   │  vSphere  │       │   Cost    │
-   │ Terraform │       │ Terraform │       │ Terraform │   │    IaC    │       │ Estimate  │
-   └───────────┘       └───────────┘       └───────────┘   └───────────┘       └───────────┘
+┌──────────────┐         ┌──────────────┐         ┌──────────────┐
+│  YOUR        │   SSH   │    REMOTE    │         │    OUTPUT    │
+│  WORKSTATION │ ──────▶ │    SERVER    │ ──────▶ │    FILES     │
+└──────────────┘         └──────────────┘         └──────────────┘
+                              │
+                              │ Analyzes:
+                              │ • Processes & services
+                              │ • Packages & configs
+                              │ • Bash history
+                              │ • Network connections
+                              ▼
+         ┌───────────────────────────────────────────────────────┐
+         │                   GENERATES                           │
+         ├───────────┬───────────┬───────────┬───────────┬──────┤
+         │    AWS    │    GCP    │   Azure   │  vSphere  │ Cost │
+         │ Terraform │ Terraform │ Terraform │    IaC    │ Est. │
+         └───────────┴───────────┴───────────┴───────────┴──────┘
 ```
 
-### Analyzes
+## Single Server Analysis
 
-| Source | What's Collected |
-|--------|------------------|
-| Processes | Running services, resource usage, open ports |
-| Files | Configs, packages, important directories |
-| History | Setup commands from bash history |
-| GitLab | Related repositories and CI/CD configs |
-| Harbor | Container images and scan results |
-| vCenter/Proxmox | VM specifications and settings |
+```bash
+# Basic remote analysis
+python analyzer.py -H 192.168.1.100 -u ubuntu -k ~/.ssh/id_rsa
 
-### Generates
+# With sudo password prompt
+python analyzer.py -H server.example.com -u admin -k ~/.ssh/id_rsa --sudo-pass
+
+# Custom SSH port
+python analyzer.py -H server.example.com -u root -k ~/.ssh/id_rsa -p 2222
+
+# Output to specific directory
+python analyzer.py -H server.example.com -u ubuntu -k ~/.ssh/id_rsa -o ./results
+```
+
+## Batch Processing (CSV)
+
+Analyze multiple servers at once using a CSV file.
+
+### Generate CSV Template
+
+```bash
+python batch_processor.py --template
+# Creates: servers.csv
+```
+
+### CSV Format
+
+```csv
+hostname,username,port,private_key,sudo_password,groups,notes
+server1.example.com,ubuntu,22,~/.ssh/id_rsa,,web,Production web server
+server2.example.com,admin,22,~/.ssh/id_rsa,sudopass,db,Database server
+192.168.1.100,root,22,~/.ssh/id_ed25519,,internal,Internal server
+```
+
+### Run Batch Analysis
+
+```bash
+# Sequential processing
+python batch_processor.py servers.csv -k ~/.ssh/id_rsa
+
+# Parallel processing (4 servers at once)
+python batch_processor.py servers.csv -k ~/.ssh/id_rsa -p 4
+
+# Skip cloud generation
+python batch_processor.py servers.csv -k ~/.ssh/id_rsa --no-cloud
+```
+
+### Batch Output
+
+```
+output/
+├── batch-summary.md          # Overview of all servers
+├── batch-summary.json        # Machine-readable summary
+├── server1.example.com/
+│   ├── analysis.json
+│   ├── documentation.md
+│   ├── cost-estimate.md
+│   ├── terraform-aws/
+│   ├── terraform-gcp/
+│   └── terraform-azure/
+├── server2.example.com/
+│   └── ...
+└── 192.168.1.100/
+    └── ...
+```
+
+## What Gets Analyzed
+
+| Source | Data Collected |
+|--------|----------------|
+| Processes | Running services, CPU/memory usage, open ports |
+| Packages | Installed apt/yum/pip packages |
+| Configs | Service configurations in /etc |
+| History | Setup commands from bash_history |
+| Network | Listening ports, active connections |
+| Storage | Disk usage, important directories |
+
+## What Gets Generated
 
 | Output | Description |
 |--------|-------------|
-| `documentation.md` | Detailed server docs with troubleshooting guide |
-| `cost-estimate.md` | Annual cost comparison across AWS, GCP, Azure |
-| `terraform-aws/` | AWS EC2 Terraform configuration |
-| `terraform-gcp/` | GCP Compute Engine Terraform configuration |
-| `terraform-azure/` | Azure VM Terraform configuration |
-| `terraform/` | vSphere VM provisioning configuration |
-| `ansible/` | Playbooks and roles to configure the system |
-| `packer/` | Templates to build VM images |
+| `documentation.md` | Server docs with troubleshooting guide |
+| `cost-estimate.md` | Annual cost: AWS vs GCP vs Azure |
+| `terraform-aws/` | AWS EC2 configuration |
+| `terraform-gcp/` | GCP Compute Engine configuration |
+| `terraform-azure/` | Azure VM configuration |
+| `ansible/` | Playbooks to configure new servers |
 
-## Usage
+## Command Reference
 
-```bash
-# Full analysis + all IaC (including cloud providers)
-python analyzer.py
+### analyzer.py
 
-# Skip cloud providers (vSphere only)
-python analyzer.py --no-cloud
+```
+usage: analyzer.py [-h] [-H HOST] [-u USER] [-p PORT] [-k KEY] [--sudo-pass]
+                   [-c CONFIG] [-o OUTPUT] [--analyze-only] [--no-cloud]
+                   [--cloud-only] [--cost-only] [-v]
 
-# Only generate cloud configs + cost estimates
-python analyzer.py --cloud-only
+Remote Connection:
+  -H, --host HOST      Remote hostname or IP to analyze
+  -u, --user USER      SSH username (default: root)
+  -p, --port PORT      SSH port (default: 22)
+  -k, --key KEY        Path to SSH private key
+  --sudo-pass          Prompt for sudo password
 
-# Only generate cost estimates
-python analyzer.py --cost-only
-
-# Generate from previous analysis
-python analyzer.py --generate-only --analysis-file output/analysis.json
-
-# Custom output directory
-python analyzer.py -o ./my-output
+Options:
+  -o, --output DIR     Output directory (default: output)
+  --analyze-only       Only run analysis, skip generation
+  --no-cloud           Skip AWS/GCP/Azure generation
+  --cloud-only         Only generate cloud configs
+  --cost-only          Only generate cost estimates
+  -v, --verbose        Enable debug logging
 ```
 
-## Configuration
+### batch_processor.py
 
-Set credentials via environment variables or `config.json`:
+```
+usage: batch_processor.py [-h] [-o OUTPUT] [-k KEY] [-p PARALLEL]
+                          [--no-cloud] [--template] [-v] [csv_file]
+
+Arguments:
+  csv_file             Path to CSV file with server list
+
+Options:
+  -o, --output DIR     Output directory (default: output)
+  -k, --key KEY        Default SSH private key path
+  -p, --parallel N     Number of parallel connections (default: 1)
+  --no-cloud           Skip cloud provider generation
+  --template           Generate a CSV template file
+  -v, --verbose        Enable debug logging
+```
+
+## Requirements
+
+- Python 3.8+
+- SSH private key access to target servers
+- Sudo access on target servers (for full analysis)
+
+### Python Dependencies
 
 ```bash
-# GitLab
-export GITLAB_URL="https://gitlab.example.com"
-export GITLAB_TOKEN="your-token"
-
-# Harbor
-export HARBOR_URL="https://harbor.example.com"
-export HARBOR_USERNAME="admin"
-export HARBOR_PASSWORD="password"
-
-# vCenter
-export VCENTER_HOST="vcenter.example.com"
-export VCENTER_USERNAME="administrator@vsphere.local"
-export VCENTER_PASSWORD="password"
+pip install -r requirements.txt
 ```
+
+Key packages:
+- `paramiko` - SSH connectivity
+- `psutil` - System analysis (optional, for local analysis)
+- `requests` - API calls for cost estimation
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
-| [Configuration Guide](docs/configuration.md) | Detailed config options |
-| [Output Reference](docs/output-reference.md) | Understanding generated files |
-| [Cloud Providers](docs/cloud-providers.md) | AWS, GCP, Azure deployment guides |
+| [Configuration Guide](docs/configuration.md) | Config options |
+| [Output Reference](docs/output-reference.md) | Generated files |
+| [Cloud Providers](docs/cloud-providers.md) | AWS, GCP, Azure guides |
 | [Cost Estimation](docs/cost-estimation.md) | How costs are calculated |
-| [Using the IaC](docs/using-iac.md) | Terraform, Ansible, Packer guides |
-| [Architecture](docs/architecture.md) | Module overview and design |
-
-## Requirements
-
-- Python 3.8+
-- Root/sudo access (for full analysis)
-- Optional: `pyvmomi` (vCenter), `proxmoxer` (Proxmox)
 
 ## License
 
