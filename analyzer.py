@@ -23,6 +23,10 @@ from generators.doc_generator import DocumentationGenerator
 from generators.terraform_generator import TerraformGenerator
 from generators.ansible_generator import AnsibleGenerator
 from generators.packer_generator import PackerGenerator
+from generators.aws_generator import AWSGenerator
+from generators.gcp_generator import GCPGenerator
+from generators.azure_generator import AzureGenerator
+from generators.cost_estimator import CostEstimator
 
 logging.basicConfig(
     level=logging.INFO,
@@ -322,14 +326,96 @@ class SystemAnalyzer:
         )
         return generator.generate(output_path or f"{self.config['output_dir']}/packer")
 
-    def generate_all(self) -> dict:
+    def generate_aws(self, output_path: str = None) -> str:
+        """Generate AWS Terraform configuration"""
+        logger.info("Generating AWS Terraform configuration...")
+        generator = AWSGenerator(self.analysis_data)
+        return generator.generate(output_path or f"{self.config['output_dir']}/terraform-aws")
+
+    def generate_gcp(self, output_path: str = None) -> str:
+        """Generate GCP Terraform configuration"""
+        logger.info("Generating GCP Terraform configuration...")
+        generator = GCPGenerator(self.analysis_data)
+        return generator.generate(output_path or f"{self.config['output_dir']}/terraform-gcp")
+
+    def generate_azure(self, output_path: str = None) -> str:
+        """Generate Azure Terraform configuration"""
+        logger.info("Generating Azure Terraform configuration...")
+        generator = AzureGenerator(self.analysis_data)
+        return generator.generate(output_path or f"{self.config['output_dir']}/terraform-azure")
+
+    def estimate_costs(self) -> dict:
+        """Estimate cloud costs for all providers"""
+        logger.info("Estimating cloud costs...")
+        estimator = CostEstimator(self.analysis_data)
+        return estimator.generate_report()
+
+    def generate_cost_report(self, output_path: str = None) -> str:
+        """Generate cost estimation report"""
+        logger.info("Generating cost report...")
+        cost_report = self.estimate_costs()
+
+        path = output_path or f"{self.config['output_dir']}/cost-estimate.md"
+        os.makedirs(os.path.dirname(path) if os.path.dirname(path) else '.', exist_ok=True)
+
+        with open(path, 'w') as f:
+            f.write(f"# Cloud Cost Estimate: {self.analysis_data.get('hostname', 'Server')}\n\n")
+            f.write(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            f.write("---\n\n")
+
+            f.write("## System Specifications\n\n")
+            specs = cost_report.get('specs', {})
+            f.write(f"| Resource | Value |\n")
+            f.write(f"|----------|-------|\n")
+            f.write(f"| vCPUs | {specs.get('vcpus', 'N/A')} |\n")
+            f.write(f"| Memory | {specs.get('memory_gb', 'N/A')} GB |\n")
+            f.write(f"| Storage | {specs.get('storage_gb', 'N/A')} GB |\n\n")
+
+            f.write(cost_report.get('comparison', ''))
+
+            f.write("\n\n---\n\n")
+            f.write("## Detailed Estimates\n\n")
+
+            for provider, estimate in cost_report.get('estimates', {}).items():
+                f.write(f"### {estimate.get('provider', provider.upper())}\n\n")
+                f.write(f"- **Instance Type:** {estimate.get('instance_type')}\n")
+                f.write(f"- **Region:** {estimate.get('region')}\n")
+                f.write(f"- **Hourly Cost:** ${estimate.get('hourly_cost', 0):.4f}\n")
+                f.write(f"- **Monthly Cost:** ${estimate.get('monthly_cost', 0):,.2f}\n")
+                f.write(f"- **Annual Cost:** ${estimate.get('annual_cost', 0):,.2f}\n\n")
+
+                details = estimate.get('details', {})
+                if details:
+                    f.write("**Cost Breakdown:**\n")
+                    for key, value in details.items():
+                        if key != 'pricing_source':
+                            f.write(f"- {key.replace('_', ' ').title()}: {value}\n")
+                f.write("\n")
+
+            # Save JSON version too
+            json_path = path.replace('.md', '.json')
+            with open(json_path, 'w') as jf:
+                json.dump(cost_report, jf, indent=2)
+
+        logger.info(f"Cost report saved to {path}")
+        return path
+
+    def generate_all(self, include_cloud: bool = True) -> dict:
         """Generate all outputs"""
-        return {
+        outputs = {
             'documentation': self.generate_documentation(),
-            'terraform': self.generate_terraform(),
+            'terraform_vsphere': self.generate_terraform(),
             'ansible': self.generate_ansible(),
             'packer': self.generate_packer()
         }
+
+        if include_cloud:
+            outputs['terraform_aws'] = self.generate_aws()
+            outputs['terraform_gcp'] = self.generate_gcp()
+            outputs['terraform_azure'] = self.generate_azure()
+            outputs['cost_estimate'] = self.generate_cost_report()
+
+        return outputs
 
     def save_analysis(self, output_path: str = None) -> str:
         """Save raw analysis data to JSON"""
@@ -372,6 +458,21 @@ def main():
         help='Path to existing analysis JSON file (for --generate-only)'
     )
     parser.add_argument(
+        '--no-cloud',
+        action='store_true',
+        help='Skip cloud provider (AWS/GCP/Azure) generation'
+    )
+    parser.add_argument(
+        '--cloud-only',
+        action='store_true',
+        help='Only generate cloud provider configs and cost estimates'
+    )
+    parser.add_argument(
+        '--cost-only',
+        action='store_true',
+        help='Only generate cost estimates'
+    )
+    parser.add_argument(
         '-v', '--verbose',
         action='store_true',
         help='Enable verbose logging'
@@ -397,10 +498,27 @@ def main():
         analyzer.save_analysis()
 
     if not args.analyze_only:
-        outputs = analyzer.generate_all()
-        print("\nGenerated outputs:")
-        for name, path in outputs.items():
-            print(f"  - {name}: {path}")
+        if args.cost_only:
+            # Only generate cost estimates
+            path = analyzer.generate_cost_report()
+            print(f"\nCost estimate generated: {path}")
+        elif args.cloud_only:
+            # Only generate cloud configs
+            outputs = {
+                'terraform_aws': analyzer.generate_aws(),
+                'terraform_gcp': analyzer.generate_gcp(),
+                'terraform_azure': analyzer.generate_azure(),
+                'cost_estimate': analyzer.generate_cost_report()
+            }
+            print("\nGenerated cloud outputs:")
+            for name, path in outputs.items():
+                print(f"  - {name}: {path}")
+        else:
+            # Generate all (with or without cloud)
+            outputs = analyzer.generate_all(include_cloud=not args.no_cloud)
+            print("\nGenerated outputs:")
+            for name, path in outputs.items():
+                print(f"  - {name}: {path}")
 
     print("\nAnalysis complete!")
 

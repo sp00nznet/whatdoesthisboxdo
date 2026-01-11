@@ -1,6 +1,6 @@
 # What Does This Box Do?
 
-> Analyze any server. Understand its purpose. Recreate it with code.
+> Analyze any server. Understand its purpose. Recreate it anywhere.
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.8+-blue.svg" alt="Python 3.8+">
@@ -9,9 +9,16 @@
   <img src="https://img.shields.io/badge/packer-1.8+-orange.svg" alt="Packer">
 </p>
 
+<p align="center">
+  <img src="https://img.shields.io/badge/AWS-EC2-FF9900.svg" alt="AWS">
+  <img src="https://img.shields.io/badge/GCP-Compute-4285F4.svg" alt="GCP">
+  <img src="https://img.shields.io/badge/Azure-VM-0078D4.svg" alt="Azure">
+  <img src="https://img.shields.io/badge/vSphere-VM-607078.svg" alt="vSphere">
+</p>
+
 ---
 
-A system analysis tool that examines servers and generates Infrastructure-as-Code to recreate them.
+A system analysis tool that examines servers, estimates cloud costs, and generates Infrastructure-as-Code to recreate them on any platform.
 
 ## Quick Start
 
@@ -30,16 +37,16 @@ python analyzer.py
 
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│   YOUR SERVER   │ ──▶ │  SYSTEM ANALYZER │ ──▶ │   IaC OUTPUT    │
+│   YOUR SERVER   │ ──▶ │  SYSTEM ANALYZER │ ──▶ │     OUTPUT      │
 └─────────────────┘     └──────────────────┘     └─────────────────┘
                                                          │
-                        ┌────────────────────────────────┼────────────────────────────────┐
-                        │                                │                                │
-                        ▼                                ▼                                ▼
-                 ┌─────────────┐                 ┌─────────────┐                 ┌─────────────┐
-                 │  Terraform  │                 │   Ansible   │                 │   Packer    │
-                 │  (vSphere)  │                 │ (Playbooks) │                 │  (Images)   │
-                 └─────────────┘                 └─────────────┘                 └─────────────┘
+         ┌───────────────────┬───────────────────┬───────┴───────┬───────────────────┐
+         │                   │                   │               │                   │
+         ▼                   ▼                   ▼               ▼                   ▼
+   ┌───────────┐       ┌───────────┐       ┌───────────┐   ┌───────────┐       ┌───────────┐
+   │    AWS    │       │    GCP    │       │   Azure   │   │  vSphere  │       │   Cost    │
+   │ Terraform │       │ Terraform │       │ Terraform │   │    IaC    │       │ Estimate  │
+   └───────────┘       └───────────┘       └───────────┘   └───────────┘       └───────────┘
 ```
 
 ### Analyzes
@@ -58,6 +65,10 @@ python analyzer.py
 | Output | Description |
 |--------|-------------|
 | `documentation.md` | Detailed server docs with troubleshooting guide |
+| `cost-estimate.md` | Annual cost comparison across AWS, GCP, Azure |
+| `terraform-aws/` | AWS EC2 Terraform configuration |
+| `terraform-gcp/` | GCP Compute Engine Terraform configuration |
+| `terraform-azure/` | Azure VM Terraform configuration |
 | `terraform/` | vSphere VM provisioning configuration |
 | `ansible/` | Playbooks and roles to configure the system |
 | `packer/` | Templates to build VM images |
@@ -65,20 +76,23 @@ python analyzer.py
 ## Usage
 
 ```bash
-# Full analysis + IaC generation
+# Full analysis + all IaC (including cloud providers)
 python analyzer.py
 
-# Analysis only (no IaC)
-python analyzer.py --analyze-only
+# Skip cloud providers (vSphere only)
+python analyzer.py --no-cloud
+
+# Only generate cloud configs + cost estimates
+python analyzer.py --cloud-only
+
+# Only generate cost estimates
+python analyzer.py --cost-only
 
 # Generate from previous analysis
 python analyzer.py --generate-only --analysis-file output/analysis.json
 
 # Custom output directory
 python analyzer.py -o ./my-output
-
-# Verbose logging
-python analyzer.py -v
 ```
 
 ## Configuration
@@ -107,6 +121,8 @@ export VCENTER_PASSWORD="password"
 |----------|-------------|
 | [Configuration Guide](docs/configuration.md) | Detailed config options |
 | [Output Reference](docs/output-reference.md) | Understanding generated files |
+| [Cloud Providers](docs/cloud-providers.md) | AWS, GCP, Azure deployment guides |
+| [Cost Estimation](docs/cost-estimation.md) | How costs are calculated |
 | [Using the IaC](docs/using-iac.md) | Terraform, Ansible, Packer guides |
 | [Architecture](docs/architecture.md) | Module overview and design |
 
