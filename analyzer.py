@@ -487,8 +487,11 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Analyze a remote server
+  # Analyze a remote server (with SSH key)
   python3 analyzer.py -H server.example.com -u ubuntu -k ~/.ssh/id_rsa
+
+  # Analyze with SSH password (no key)
+  python3 analyzer.py -H server.example.com -u admin --password
 
   # Analyze with sudo password
   python3 analyzer.py -H server.example.com -u admin -k ~/.ssh/id_rsa --sudo-pass
@@ -526,6 +529,11 @@ Examples:
         '--sudo-pass',
         action='store_true',
         help='Prompt for sudo password'
+    )
+    remote_group.add_argument(
+        '--password',
+        action='store_true',
+        help='Prompt for SSH password (instead of key)'
     )
 
     # General options
@@ -582,16 +590,22 @@ Examples:
     # Build remote config if host is specified
     remote_config = None
     if args.host:
+        import getpass
+
         sudo_password = None
         if args.sudo_pass:
-            import getpass
             sudo_password = getpass.getpass("Sudo password: ")
+
+        ssh_password = None
+        if args.password:
+            ssh_password = getpass.getpass("SSH password: ")
 
         remote_config = SSHConfig(
             hostname=args.host,
             username=args.user,
             port=args.port,
             private_key_path=args.key,
+            password=ssh_password,
             sudo_password=sudo_password,
             use_sudo=True
         )
