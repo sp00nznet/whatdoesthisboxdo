@@ -11,6 +11,7 @@ import json
 import uuid
 import threading
 import functools
+import tempfile
 from datetime import datetime
 from io import StringIO
 from pathlib import Path
@@ -63,6 +64,7 @@ jobs = {}
 
 def analyze_server(job_id, hostname, username, password=None, ssh_key=None, port=22, os_type='linux'):
     """Background task to analyze a server."""
+    temp_key_file = None
     try:
         jobs[job_id]['status'] = 'running'
         jobs[job_id]['message'] = f'Connecting to {hostname}...'
@@ -82,11 +84,25 @@ def analyze_server(job_id, hostname, username, password=None, ssh_key=None, port
             analyzer = SystemAnalyzer(winrm_config=winrm_config)
             data = analyzer.run_windows_analysis()
         else:
+            # Handle SSH key - could be file content or file path
+            ssh_key_path = None
+            if ssh_key:
+                if ssh_key.startswith('-----BEGIN'):
+                    # SSH key content - write to temp file
+                    temp_key_file = tempfile.NamedTemporaryFile(mode='w', suffix='.key', delete=False)
+                    temp_key_file.write(ssh_key)
+                    temp_key_file.close()
+                    os.chmod(temp_key_file.name, 0o600)
+                    ssh_key_path = temp_key_file.name
+                else:
+                    # Assume it's a file path
+                    ssh_key_path = ssh_key
+
             ssh_config = SSHConfig(
                 hostname=hostname,
                 username=username,
                 password=password if password else None,
-                private_key_path=ssh_key if ssh_key else None,
+                private_key_path=ssh_key_path,
                 port=port
             )
             analyzer = SystemAnalyzer(remote_config=ssh_config)
@@ -128,6 +144,13 @@ def analyze_server(job_id, hostname, username, password=None, ssh_key=None, port
         jobs[job_id]['status'] = 'failed'
         jobs[job_id]['message'] = f'Error: {str(e)}'
         jobs[job_id]['error'] = str(e)
+    finally:
+        # Clean up temp key file if created
+        if temp_key_file and os.path.exists(temp_key_file.name):
+            try:
+                os.unlink(temp_key_file.name)
+            except:
+                pass
 
 
 @app.route('/')
