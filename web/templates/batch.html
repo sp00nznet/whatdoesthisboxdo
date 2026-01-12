@@ -11,6 +11,17 @@
 <div class="form-container">
     <form method="POST" enctype="multipart/form-data" class="batch-form">
         <div class="form-section">
+            <h3>Saved Credentials</h3>
+            <div class="form-group">
+                <label for="saved_credential">Use Saved Credential</label>
+                <select id="saved_credential" name="saved_credential">
+                    <option value="">-- Use credentials from CSV --</option>
+                </select>
+                <small>Apply this credential to all servers in the batch (CSV only needs hostname)</small>
+            </div>
+        </div>
+
+        <div class="form-section">
             <h3>Upload CSV File</h3>
 
             <div class="form-group file-upload">
@@ -51,7 +62,7 @@
             </tr>
             <tr>
                 <td><code>username</code></td>
-                <td>Yes</td>
+                <td>If no saved credential</td>
                 <td>Login username</td>
             </tr>
             <tr>
@@ -76,9 +87,15 @@
             </tr>
         </tbody>
     </table>
-    <p><small>* Either password or ssh_key is required</small></p>
+    <p><small>* Either password or ssh_key is required (unless using saved credential)</small></p>
 
-    <h4>Example CSV</h4>
+    <h4>Example CSV (with saved credential)</h4>
+    <pre class="csv-example">hostname
+webserver1.example.com
+192.168.1.50
+dbserver.local</pre>
+
+    <h4>Example CSV (with credentials in file)</h4>
     <pre class="csv-example">hostname,username,password,port,os_type
 webserver1.example.com,admin,secretpass,22,linux
 192.168.1.50,root,password123,22,linux
@@ -92,6 +109,20 @@ winserver.local,Administrator,WinPass123,5985,windows</pre>
 
 {% block scripts %}
 <script>
+// Load saved credentials
+fetch('/api/credentials')
+    .then(response => response.json())
+    .then(credentials => {
+        const select = document.getElementById('saved_credential');
+        credentials.forEach(cred => {
+            const option = document.createElement('option');
+            option.value = cred.id;
+            option.textContent = cred.hostname ? `${cred.name} (${cred.hostname})` : cred.name;
+            select.appendChild(option);
+        });
+    })
+    .catch(err => console.log('No saved credentials available'));
+
 const fileInput = document.getElementById('csv_file');
 const fileLabel = document.querySelector('.file-label');
 const fileName = document.querySelector('.file-name');
