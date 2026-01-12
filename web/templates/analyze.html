@@ -96,9 +96,10 @@ fetch('/api/credentials')
         credentials.forEach(cred => {
             const option = document.createElement('option');
             option.value = cred.id;
-            option.textContent = `${cred.name} (${cred.hostname})`;
-            option.dataset.hostname = cred.hostname;
-            option.dataset.osType = cred.os_type;
+            option.textContent = cred.hostname ? `${cred.name} (${cred.hostname})` : cred.name;
+            option.dataset.hostname = cred.hostname || '';
+            option.dataset.port = cred.port || '';
+            option.dataset.osType = cred.os_type || 'linux';
             select.appendChild(option);
         });
     })
@@ -106,29 +107,35 @@ fetch('/api/credentials')
 
 // Handle saved credential selection
 document.getElementById('saved_credential').addEventListener('change', function() {
-    const manualSection = document.getElementById('manual-section');
     const authSection = document.getElementById('auth-section');
     const selectedOption = this.options[this.selectedIndex];
 
     if (this.value) {
-        // Using saved credential - hide manual fields but keep hostname visible
-        manualSection.style.opacity = '0.5';
+        // Using saved credential - only gray out authentication fields
         authSection.style.opacity = '0.5';
+        authSection.querySelectorAll('input').forEach(input => input.disabled = true);
 
-        // Pre-fill hostname from selected credential
-        document.getElementById('hostname').value = selectedOption.dataset.hostname || '';
+        // Pre-fill connection details from credential defaults (if set)
+        if (selectedOption.dataset.hostname) {
+            document.getElementById('hostname').value = selectedOption.dataset.hostname;
+        }
+        if (selectedOption.dataset.port) {
+            document.getElementById('port').value = selectedOption.dataset.port;
+        }
         document.getElementById('os_type').value = selectedOption.dataset.osType || 'linux';
 
-        // Update port based on OS
-        if (selectedOption.dataset.osType === 'windows') {
-            document.getElementById('port').value = '5985';
-        } else {
-            document.getElementById('port').value = '22';
+        // Update port based on OS if no default port set
+        if (!selectedOption.dataset.port) {
+            if (selectedOption.dataset.osType === 'windows') {
+                document.getElementById('port').value = '5985';
+            } else {
+                document.getElementById('port').value = '22';
+            }
         }
     } else {
-        // Manual entry
-        manualSection.style.opacity = '1';
+        // Manual entry - enable all fields
         authSection.style.opacity = '1';
+        authSection.querySelectorAll('input').forEach(input => input.disabled = false);
     }
 });
 

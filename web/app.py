@@ -680,6 +680,7 @@ def api_list_credentials():
         'id': c['id'],
         'name': c['name'],
         'hostname': c['hostname'],
+        'port': c['port'],
         'os_type': c['os_type']
     } for c in credentials])
 
