@@ -9,11 +9,13 @@ import sys
 import csv
 import json
 import uuid
+import shutil
 import threading
 import functools
 import tempfile
+import zipfile
 from datetime import datetime
-from io import StringIO
+from io import StringIO, BytesIO
 from pathlib import Path
 
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify, session
@@ -28,6 +30,13 @@ os.chdir(PARENT_DIR)
 
 from analyzer import SystemAnalyzer
 from generators.doc_generator import DocumentationGenerator
+from generators.terraform_generator import TerraformGenerator
+from generators.ansible_generator import AnsibleGenerator
+from generators.ansible_full_generator import AnsibleFullGenerator
+from generators.aws_generator import AWSGenerator
+from generators.gcp_generator import GCPGenerator
+from generators.azure_generator import AzureGenerator
+from generators.cost_estimator import CostEstimator
 from connectors.ssh_executor import SSHConfig
 
 # Try to import WinRM support
@@ -62,15 +71,28 @@ OUTPUT_FOLDER.mkdir(exist_ok=True)
 jobs = {}
 
 
-def analyze_server(job_id, hostname, username, password=None, ssh_key=None, port=22, os_type='linux'):
-    """Background task to analyze a server."""
+def analyze_server(job_id, hostname, username, password=None, ssh_key=None, port=22, os_type='linux',
+                   monitor_duration=0, generate_ansible=True, generate_ansible_full=True,
+                   generate_terraform=True, generate_cloud=True):
+    """Background task to analyze a server and generate all outputs."""
     temp_key_file = None
     try:
         jobs[job_id]['status'] = 'running'
         jobs[job_id]['message'] = f'Connecting to {hostname}...'
 
+        # Create output directory for this analysis
+        safe_hostname = hostname.replace('.', '_').replace(':', '_')
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        base_name = f"{safe_hostname}_{timestamp}"
+        server_output_dir = OUTPUT_FOLDER / base_name
+
+        server_output_dir.mkdir(parents=True, exist_ok=True)
+
         # Analyze the server based on OS type
-        jobs[job_id]['message'] = 'Analyzing system...'
+        if monitor_duration > 0:
+            jobs[job_id]['message'] = f'Collecting metrics for {monitor_duration} seconds...'
+        else:
+            jobs[job_id]['message'] = 'Analyzing system...'
 
         if os_type == 'windows':
             if not WINRM_AVAILABLE:
@@ -81,7 +103,7 @@ def analyze_server(job_id, hostname, username, password=None, ssh_key=None, port
                 password=password,
                 port=port if port != 22 else 5985
             )
-            analyzer = SystemAnalyzer(winrm_config=winrm_config)
+            analyzer = SystemAnalyzer(winrm_config=winrm_config, monitor_duration=monitor_duration)
             data = analyzer.run_windows_analysis()
         else:
             # Handle SSH key - could be file content or file path
@@ -105,7 +127,7 @@ def analyze_server(job_id, hostname, username, password=None, ssh_key=None, port
                 private_key_path=ssh_key_path,
                 port=port
             )
-            analyzer = SystemAnalyzer(remote_config=ssh_config)
+            analyzer = SystemAnalyzer(remote_config=ssh_config, monitor_duration=monitor_duration)
             data = analyzer.run_remote_analysis()
 
         # Generate documentation
@@ -114,11 +136,7 @@ def analyze_server(job_id, hostname, username, password=None, ssh_key=None, port
         markdown = doc_gen.generate(data)
         html = doc_gen.generate_html(data)
 
-        # Save outputs
-        safe_hostname = hostname.replace('.', '_').replace(':', '_')
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        base_name = f"{safe_hostname}_{timestamp}"
-
+        # Save documentation outputs
         md_path = OUTPUT_FOLDER / f"{base_name}.md"
         html_path = OUTPUT_FOLDER / f"{base_name}.html"
         json_path = OUTPUT_FOLDER / f"{base_name}.json"
@@ -130,15 +148,91 @@ def analyze_server(job_id, hostname, username, password=None, ssh_key=None, port
         with open(json_path, 'w') as f:
             json.dump(data, f, indent=2, default=str)
 
-        jobs[job_id]['status'] = 'completed'
-        jobs[job_id]['message'] = 'Analysis complete!'
-        jobs[job_id]['result'] = {
+        # Initialize result with files
+        result = {
             'hostname': hostname,
             'markdown_file': str(md_path.name),
             'html_file': str(html_path.name),
             'json_file': str(json_path.name),
-            'data': data
+            'output_dir': str(base_name),
+            'data': data,
+            'generated_outputs': {}
         }
+
+        # Generate Ansible playbooks
+        if generate_ansible:
+            jobs[job_id]['message'] = 'Generating Ansible playbooks...'
+            try:
+                ansible_gen = AnsibleGenerator(data)
+                ansible_path = ansible_gen.generate(str(server_output_dir / 'ansible'))
+                result['generated_outputs']['ansible'] = 'ansible'
+            except Exception as e:
+                result['generated_outputs']['ansible_error'] = str(e)
+
+        # Generate full Ansible recreation playbooks
+        if generate_ansible_full:
+            jobs[job_id]['message'] = 'Generating full Ansible recreation playbooks...'
+            try:
+                ansible_full_gen = AnsibleFullGenerator(data)
+                ansible_full_path = ansible_full_gen.generate(str(server_output_dir / 'ansible-full'))
+                result['generated_outputs']['ansible_full'] = 'ansible-full'
+            except Exception as e:
+                result['generated_outputs']['ansible_full_error'] = str(e)
+
+        # Generate vSphere Terraform
+        if generate_terraform:
+            jobs[job_id]['message'] = 'Generating Terraform configs...'
+            try:
+                tf_gen = TerraformGenerator(data)
+                tf_path = tf_gen.generate(str(server_output_dir / 'terraform-vsphere'))
+                result['generated_outputs']['terraform_vsphere'] = 'terraform-vsphere'
+            except Exception as e:
+                result['generated_outputs']['terraform_vsphere_error'] = str(e)
+
+        # Generate cloud provider configs
+        if generate_cloud:
+            # AWS
+            jobs[job_id]['message'] = 'Generating AWS Terraform...'
+            try:
+                aws_gen = AWSGenerator(data)
+                aws_path = aws_gen.generate(str(server_output_dir / 'terraform-aws'))
+                result['generated_outputs']['terraform_aws'] = 'terraform-aws'
+            except Exception as e:
+                result['generated_outputs']['terraform_aws_error'] = str(e)
+
+            # GCP
+            jobs[job_id]['message'] = 'Generating GCP Terraform...'
+            try:
+                gcp_gen = GCPGenerator(data)
+                gcp_path = gcp_gen.generate(str(server_output_dir / 'terraform-gcp'))
+                result['generated_outputs']['terraform_gcp'] = 'terraform-gcp'
+            except Exception as e:
+                result['generated_outputs']['terraform_gcp_error'] = str(e)
+
+            # Azure
+            jobs[job_id]['message'] = 'Generating Azure Terraform...'
+            try:
+                azure_gen = AzureGenerator(data)
+                azure_path = azure_gen.generate(str(server_output_dir / 'terraform-azure'))
+                result['generated_outputs']['terraform_azure'] = 'terraform-azure'
+            except Exception as e:
+                result['generated_outputs']['terraform_azure_error'] = str(e)
+
+            # Cost estimate
+            jobs[job_id]['message'] = 'Generating cost estimates...'
+            try:
+                cost_estimator = CostEstimator(data)
+                cost_report = cost_estimator.generate_report()
+                cost_path = server_output_dir / 'cost-estimate.json'
+                with open(cost_path, 'w') as f:
+                    json.dump(cost_report, f, indent=2)
+                result['generated_outputs']['cost_estimate'] = 'cost-estimate.json'
+            except Exception as e:
+                result['generated_outputs']['cost_estimate_error'] = str(e)
+
+        jobs[job_id]['status'] = 'completed'
+        jobs[job_id]['message'] = 'Analysis complete!'
+        jobs[job_id]['result'] = result
 
     except Exception as e:
         jobs[job_id]['status'] = 'failed'
@@ -167,6 +261,13 @@ def analyze():
         hostname = request.form.get('hostname', '').strip()
         port = int(request.form.get('port', 22))
         os_type = request.form.get('os_type', 'linux')
+
+        # Get analysis options
+        monitor_duration = int(request.form.get('monitor_duration', 0))
+        generate_ansible = request.form.get('generate_ansible') == '1'
+        generate_ansible_full = request.form.get('generate_ansible_full') == '1'
+        generate_terraform = request.form.get('generate_terraform') == '1'
+        generate_cloud = request.form.get('generate_cloud') == '1'
 
         # Check if using saved credential
         saved_credential_id = request.form.get('saved_credential', '').strip()
@@ -210,13 +311,27 @@ def analyze():
             'status': 'pending',
             'message': 'Starting analysis...',
             'hostname': hostname,
-            'created': datetime.now().isoformat()
+            'created': datetime.now().isoformat(),
+            'options': {
+                'monitor_duration': monitor_duration,
+                'generate_ansible': generate_ansible,
+                'generate_ansible_full': generate_ansible_full,
+                'generate_terraform': generate_terraform,
+                'generate_cloud': generate_cloud
+            }
         }
 
         # Start background thread
         thread = threading.Thread(
             target=analyze_server,
-            args=(job_id, hostname, username, password, ssh_key, port, os_type)
+            args=(job_id, hostname, username, password, ssh_key, port, os_type),
+            kwargs={
+                'monitor_duration': monitor_duration,
+                'generate_ansible': generate_ansible,
+                'generate_ansible_full': generate_ansible_full,
+                'generate_terraform': generate_terraform,
+                'generate_cloud': generate_cloud
+            }
         )
         thread.daemon = True
         thread.start()
@@ -242,6 +357,13 @@ def batch():
         if not file.filename.endswith('.csv'):
             flash('Please upload a CSV file', 'error')
             return render_template('batch.html')
+
+        # Get analysis options
+        monitor_duration = int(request.form.get('monitor_duration', 0))
+        generate_ansible = request.form.get('generate_ansible') == '1'
+        generate_ansible_full = request.form.get('generate_ansible_full') == '1'
+        generate_terraform = request.form.get('generate_terraform') == '1'
+        generate_cloud = request.form.get('generate_cloud') == '1'
 
         # Check for saved credential
         saved_cred = None
@@ -287,12 +409,26 @@ def batch():
                     'message': 'Queued for analysis...',
                     'hostname': hostname,
                     'batch_id': batch_id,
-                    'created': datetime.now().isoformat()
+                    'created': datetime.now().isoformat(),
+                    'options': {
+                        'monitor_duration': monitor_duration,
+                        'generate_ansible': generate_ansible,
+                        'generate_ansible_full': generate_ansible_full,
+                        'generate_terraform': generate_terraform,
+                        'generate_cloud': generate_cloud
+                    }
                 }
 
                 thread = threading.Thread(
                     target=analyze_server,
-                    args=(job_id, hostname, username, password, ssh_key, port, os_type)
+                    args=(job_id, hostname, username, password, ssh_key, port, os_type),
+                    kwargs={
+                        'monitor_duration': monitor_duration,
+                        'generate_ansible': generate_ansible,
+                        'generate_ansible_full': generate_ansible_full,
+                        'generate_terraform': generate_terraform,
+                        'generate_cloud': generate_cloud
+                    }
                 )
                 thread.daemon = True
                 thread.start()
@@ -389,6 +525,104 @@ def download_doc(filename):
         return redirect(url_for('docs_list'))
 
     return send_file(file_path, as_attachment=True)
+
+
+def create_zip_from_directory(source_dir, zip_name):
+    """Create a ZIP file from a directory and return BytesIO object."""
+    memory_file = BytesIO()
+    with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for root, dirs, files in os.walk(source_dir):
+            for file in files:
+                file_path = Path(root) / file
+                arcname = file_path.relative_to(source_dir)
+                zf.write(file_path, arcname)
+    memory_file.seek(0)
+    return memory_file
+
+
+@app.route('/download/output/<output_dir>/<output_type>')
+def download_output(output_dir, output_type):
+    """Download generated Ansible or Terraform output as ZIP."""
+    # Security: validate path components
+    safe_output_dir = Path(output_dir).name
+    safe_output_type = Path(output_type).name
+
+    # Map output types to directories
+    output_type_map = {
+        'ansible': 'ansible',
+        'ansible-full': 'ansible-full',
+        'terraform-vsphere': 'terraform-vsphere',
+        'terraform-aws': 'terraform-aws',
+        'terraform-gcp': 'terraform-gcp',
+        'terraform-azure': 'terraform-azure',
+        'all-terraform': None,  # Special case - all terraform combined
+        'all': None  # Special case - all outputs
+    }
+
+    if safe_output_type not in output_type_map:
+        flash('Invalid output type', 'error')
+        return redirect(url_for('docs_list'))
+
+    output_path = OUTPUT_FOLDER / safe_output_dir
+
+    if not output_path.exists() or not output_path.is_dir():
+        flash('Output directory not found', 'error')
+        return redirect(url_for('docs_list'))
+
+    # Handle special cases for combined downloads
+    if safe_output_type == 'all-terraform':
+        # Combine all terraform outputs
+        memory_file = BytesIO()
+        with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for tf_type in ['terraform-vsphere', 'terraform-aws', 'terraform-gcp', 'terraform-azure']:
+                tf_path = output_path / tf_type
+                if tf_path.exists():
+                    for root, dirs, files in os.walk(tf_path):
+                        for file in files:
+                            file_path = Path(root) / file
+                            arcname = Path(tf_type) / file_path.relative_to(tf_path)
+                            zf.write(file_path, arcname)
+        memory_file.seek(0)
+        return send_file(
+            memory_file,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=f'{safe_output_dir}_all_terraform.zip'
+        )
+    elif safe_output_type == 'all':
+        # All outputs including ansible
+        memory_file = BytesIO()
+        with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for item in output_path.iterdir():
+                if item.is_dir():
+                    for root, dirs, files in os.walk(item):
+                        for file in files:
+                            file_path = Path(root) / file
+                            arcname = Path(item.name) / file_path.relative_to(item)
+                            zf.write(file_path, arcname)
+                else:
+                    zf.write(item, item.name)
+        memory_file.seek(0)
+        return send_file(
+            memory_file,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=f'{safe_output_dir}_all_outputs.zip'
+        )
+
+    # Single output type
+    target_dir = output_path / output_type_map[safe_output_type]
+    if not target_dir.exists():
+        flash(f'{safe_output_type} output not found', 'error')
+        return redirect(url_for('docs_list'))
+
+    memory_file = create_zip_from_directory(target_dir, safe_output_type)
+    return send_file(
+        memory_file,
+        mimetype='application/zip',
+        as_attachment=True,
+        download_name=f'{safe_output_dir}_{safe_output_type}.zip'
+    )
 
 
 @app.route('/docs')
@@ -782,7 +1016,12 @@ def api_analyze():
             "ssh_key": "...",          // SSH private key content
             "port": 22,                // optional, default 22
             "os_type": "linux",        // optional: linux or windows
-            "credential_id": 1         // optional: use saved credential instead
+            "credential_id": 1,        // optional: use saved credential instead
+            "monitor_duration": 60,    // optional: metrics collection duration in seconds (0 = disabled)
+            "generate_ansible": true,  // optional: generate basic Ansible playbooks (default: true)
+            "generate_ansible_full": true,  // optional: generate full recreation playbooks (default: true)
+            "generate_terraform": true,     // optional: generate vSphere Terraform (default: true)
+            "generate_cloud": true     // optional: generate AWS/GCP/Azure configs (default: true)
         }
     """
     data = request.get_json()
@@ -791,6 +1030,13 @@ def api_analyze():
 
     hostname = data.get('hostname', '').strip()
     credential_id = data.get('credential_id')
+
+    # Get generation options
+    monitor_duration = int(data.get('monitor_duration', 0))
+    generate_ansible = data.get('generate_ansible', True)
+    generate_ansible_full = data.get('generate_ansible_full', True)
+    generate_terraform = data.get('generate_terraform', True)
+    generate_cloud = data.get('generate_cloud', True)
 
     if credential_id:
         cred = get_credential(credential_id=int(credential_id))
@@ -822,12 +1068,26 @@ def api_analyze():
         'status': 'pending',
         'message': 'Starting analysis...',
         'hostname': hostname,
-        'created': datetime.now().isoformat()
+        'created': datetime.now().isoformat(),
+        'options': {
+            'monitor_duration': monitor_duration,
+            'generate_ansible': generate_ansible,
+            'generate_ansible_full': generate_ansible_full,
+            'generate_terraform': generate_terraform,
+            'generate_cloud': generate_cloud
+        }
     }
 
     thread = threading.Thread(
         target=analyze_server,
-        args=(job_id, hostname, username, password, ssh_key, port, os_type)
+        args=(job_id, hostname, username, password, ssh_key, port, os_type),
+        kwargs={
+            'monitor_duration': monitor_duration,
+            'generate_ansible': generate_ansible,
+            'generate_ansible_full': generate_ansible_full,
+            'generate_terraform': generate_terraform,
+            'generate_cloud': generate_cloud
+        }
     )
     thread.daemon = True
     thread.start()
@@ -853,14 +1113,20 @@ def api_batch():
                 {"hostname": "server1.example.com"},
                 {"hostname": "server2.example.com", "port": 2222}
             ],
-            "credential_id": 1  // Apply this credential to all servers
+            "credential_id": 1,         // Apply this credential to all servers
+            "monitor_duration": 60,     // optional: metrics collection duration in seconds (0 = disabled)
+            "generate_ansible": true,   // optional: generate basic Ansible playbooks (default: true)
+            "generate_ansible_full": true,  // optional: generate full recreation playbooks (default: true)
+            "generate_terraform": true,     // optional: generate vSphere Terraform (default: true)
+            "generate_cloud": true      // optional: generate AWS/GCP/Azure configs (default: true)
         }
         // OR include credentials per server:
         {
             "servers": [
                 {"hostname": "server1.example.com", "username": "root", "password": "secret"},
                 {"hostname": "server2.example.com", "username": "admin", "ssh_key": "..."}
-            ]
+            ],
+            "monitor_duration": 30
         }
     """
     data = request.get_json()
@@ -870,6 +1136,13 @@ def api_batch():
     servers = data.get('servers', [])
     if not servers:
         return api_response(error='servers array is required', status=400)
+
+    # Get generation options (apply to all servers in batch)
+    monitor_duration = int(data.get('monitor_duration', 0))
+    generate_ansible = data.get('generate_ansible', True)
+    generate_ansible_full = data.get('generate_ansible_full', True)
+    generate_terraform = data.get('generate_terraform', True)
+    generate_cloud = data.get('generate_cloud', True)
 
     credential_id = data.get('credential_id')
     saved_cred = None
@@ -908,12 +1181,26 @@ def api_batch():
             'message': 'Queued for analysis...',
             'hostname': hostname,
             'batch_id': batch_id,
-            'created': datetime.now().isoformat()
+            'created': datetime.now().isoformat(),
+            'options': {
+                'monitor_duration': monitor_duration,
+                'generate_ansible': generate_ansible,
+                'generate_ansible_full': generate_ansible_full,
+                'generate_terraform': generate_terraform,
+                'generate_cloud': generate_cloud
+            }
         }
 
         thread = threading.Thread(
             target=analyze_server,
-            args=(job_id, hostname, username, password, ssh_key, port, os_type)
+            args=(job_id, hostname, username, password, ssh_key, port, os_type),
+            kwargs={
+                'monitor_duration': monitor_duration,
+                'generate_ansible': generate_ansible,
+                'generate_ansible_full': generate_ansible_full,
+                'generate_terraform': generate_terraform,
+                'generate_cloud': generate_cloud
+            }
         )
         thread.daemon = True
         thread.start()
@@ -982,7 +1269,8 @@ def api_get_job(job_id):
         'hostname': job.get('hostname'),
         'batch_id': job.get('batch_id'),
         'created': job.get('created'),
-        'error': job.get('error')
+        'error': job.get('error'),
+        'options': job.get('options')
     }
 
     if job.get('status') == 'completed' and job.get('result'):
@@ -991,6 +1279,17 @@ def api_get_job(job_id):
             'html': job['result'].get('html_file'),
             'json': job['result'].get('json_file')
         }
+        result['output_dir'] = job['result'].get('output_dir')
+        result['generated_outputs'] = job['result'].get('generated_outputs', {})
+
+        # Include download URLs for generated outputs
+        output_dir = job['result'].get('output_dir')
+        if output_dir:
+            result['download_urls'] = {
+                output_type: f'/api/v1/outputs/{output_dir}/{output_type}'
+                for output_type in result['generated_outputs'].keys()
+                if not output_type.endswith('_error')
+            }
 
     return api_response(data=result)
 
@@ -1177,6 +1476,187 @@ def api_get_doc(filename):
         mimetype = 'text/html'
 
     return send_file(file_path, mimetype=mimetype)
+
+
+@app.route('/api/v1/outputs', methods=['GET'])
+@api_key_required
+def api_list_outputs():
+    """
+    List all generated output directories with their available downloads.
+
+    GET /api/v1/outputs
+    """
+    outputs = []
+    for item in OUTPUT_FOLDER.iterdir():
+        if item.is_dir():
+            output_info = {
+                'name': item.name,
+                'available_outputs': {}
+            }
+            # Check what outputs exist
+            for output_type in ['ansible', 'ansible-full', 'terraform-vsphere',
+                               'terraform-aws', 'terraform-gcp', 'terraform-azure']:
+                if (item / output_type).exists():
+                    output_info['available_outputs'][output_type] = True
+            if (item / 'cost-estimate.json').exists():
+                output_info['available_outputs']['cost_estimate'] = True
+
+            if output_info['available_outputs']:
+                outputs.append(output_info)
+
+    return api_response(data={'outputs': outputs, 'count': len(outputs)})
+
+
+@app.route('/api/v1/outputs/<output_dir>/<output_type>', methods=['GET'])
+@api_key_required
+def api_download_output(output_dir, output_type):
+    """
+    Download generated Ansible or Terraform output as ZIP.
+
+    GET /api/v1/outputs/<output_dir>/<output_type>
+
+    Available output types:
+        - ansible: Basic Ansible playbooks
+        - ansible-full: Full system recreation playbooks
+        - terraform-vsphere: vSphere Terraform configuration
+        - terraform-aws: AWS Terraform configuration
+        - terraform-gcp: GCP Terraform configuration
+        - terraform-azure: Azure Terraform configuration
+        - all-terraform: All Terraform configs combined
+        - all: All outputs combined
+    """
+    # Security: validate path components
+    safe_output_dir = Path(output_dir).name
+    safe_output_type = Path(output_type).name
+
+    output_type_map = {
+        'ansible': 'ansible',
+        'ansible-full': 'ansible-full',
+        'terraform-vsphere': 'terraform-vsphere',
+        'terraform-aws': 'terraform-aws',
+        'terraform-gcp': 'terraform-gcp',
+        'terraform-azure': 'terraform-azure',
+        'all-terraform': None,
+        'all': None
+    }
+
+    if safe_output_type not in output_type_map:
+        return api_response(error='Invalid output type', status=400)
+
+    output_path = OUTPUT_FOLDER / safe_output_dir
+
+    if not output_path.exists() or not output_path.is_dir():
+        return api_response(error='Output directory not found', status=404)
+
+    # Handle special cases for combined downloads
+    if safe_output_type == 'all-terraform':
+        memory_file = BytesIO()
+        with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for tf_type in ['terraform-vsphere', 'terraform-aws', 'terraform-gcp', 'terraform-azure']:
+                tf_path = output_path / tf_type
+                if tf_path.exists():
+                    for root, dirs, files in os.walk(tf_path):
+                        for file in files:
+                            file_path = Path(root) / file
+                            arcname = Path(tf_type) / file_path.relative_to(tf_path)
+                            zf.write(file_path, arcname)
+        memory_file.seek(0)
+        return send_file(
+            memory_file,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=f'{safe_output_dir}_all_terraform.zip'
+        )
+    elif safe_output_type == 'all':
+        memory_file = BytesIO()
+        with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for item in output_path.iterdir():
+                if item.is_dir():
+                    for root, dirs, files in os.walk(item):
+                        for file in files:
+                            file_path = Path(root) / file
+                            arcname = Path(item.name) / file_path.relative_to(item)
+                            zf.write(file_path, arcname)
+                else:
+                    zf.write(item, item.name)
+        memory_file.seek(0)
+        return send_file(
+            memory_file,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=f'{safe_output_dir}_all_outputs.zip'
+        )
+
+    # Single output type
+    target_dir = output_path / output_type_map[safe_output_type]
+    if not target_dir.exists():
+        return api_response(error=f'{safe_output_type} output not found', status=404)
+
+    memory_file = create_zip_from_directory(target_dir, safe_output_type)
+    return send_file(
+        memory_file,
+        mimetype='application/zip',
+        as_attachment=True,
+        download_name=f'{safe_output_dir}_{safe_output_type}.zip'
+    )
+
+
+@app.route('/api/v1/jobs/<job_id>/outputs', methods=['GET'])
+@api_key_required
+def api_job_outputs(job_id):
+    """
+    List available outputs for a completed job.
+
+    GET /api/v1/jobs/<job_id>/outputs
+    """
+    job = jobs.get(job_id)
+    if not job:
+        return api_response(error='Job not found', status=404)
+
+    if job.get('status') != 'completed':
+        return api_response(error=f'Job is not completed (status: {job.get("status")})', status=400)
+
+    result = job.get('result', {})
+    output_dir = result.get('output_dir')
+    generated_outputs = result.get('generated_outputs', {})
+
+    if not output_dir:
+        return api_response(error='No output directory for this job', status=404)
+
+    return api_response(data={
+        'output_dir': output_dir,
+        'generated_outputs': generated_outputs,
+        'download_urls': {
+            output_type: f'/api/v1/outputs/{output_dir}/{output_type}'
+            for output_type in generated_outputs.keys()
+            if not output_type.endswith('_error')
+        }
+    })
+
+
+@app.route('/api/v1/jobs/<job_id>/outputs/<output_type>', methods=['GET'])
+@api_key_required
+def api_job_output_download(job_id, output_type):
+    """
+    Download a specific output from a completed job.
+
+    GET /api/v1/jobs/<job_id>/outputs/<output_type>
+    """
+    job = jobs.get(job_id)
+    if not job:
+        return api_response(error='Job not found', status=404)
+
+    if job.get('status') != 'completed':
+        return api_response(error=f'Job is not completed (status: {job.get("status")})', status=400)
+
+    result = job.get('result', {})
+    output_dir = result.get('output_dir')
+
+    if not output_dir:
+        return api_response(error='No output directory for this job', status=404)
+
+    # Delegate to the download_output function
+    return api_download_output(output_dir, output_type)
 
 
 if __name__ == '__main__':
