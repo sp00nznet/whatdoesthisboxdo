@@ -342,6 +342,66 @@ This collects:
 - **Security Checklist** - Firewall, exposed ports, fail2ban, etc.
 - **Resource Metrics** - CPU, memory, disk, network with assessments
 - **Service Opinions** - Analysis of running services with recommendations
+- **Scaling Recommendations** - Capacity analysis and scaling strategies
+- **Containerization Suggestions** - Docker migration guidance
+
+### Scaling Analysis
+
+The documentation includes intelligent scaling recommendations based on detected workloads:
+
+**Capacity Analysis**
+- Current CPU/memory utilization assessment
+- Headroom calculation for growth
+- Resource bottleneck identification
+
+**Scaling Strategies by Service Type**
+
+| Service Type | Recommended Strategy |
+|--------------|---------------------|
+| Web Servers (nginx, Apache) | Horizontal scaling with load balancer |
+| Stateless Apps (Node, Python) | Auto-scaling based on CPU/request metrics |
+| Databases (MySQL, PostgreSQL) | Vertical scaling first, then read replicas |
+| Container Hosts | Kubernetes/Swarm orchestration |
+
+**Includes:**
+- Load balancer setup guidance
+- Auto-scaling trigger recommendations (scale at 70% CPU, scale in at 30%)
+- Session management for stateless scaling
+- Database-specific strategies (read replicas, sharding, connection pooling)
+- Capacity planning projections
+
+### Containerization Analysis
+
+Identifies services suitable for containerization and generates migration guidance:
+
+**Service Detection**
+- Analyzes running services against known containerizable patterns
+- Recommends appropriate base images (Alpine variants for smaller footprint)
+- Identifies port mappings and volume requirements
+
+**Generated Artifacts**
+
+```yaml
+# Example output for detected services
+services:
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+
+  postgresql:
+    image: postgres:15-alpine
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+```
+
+**Recommendations Include:**
+- Base image selection (official images, Alpine variants)
+- Multi-stage build suggestions for compiled languages
+- Volume strategies for databases
+- Network configuration for service communication
+- Migration pros/cons assessment
 
 ## Command Reference
 
