@@ -103,6 +103,98 @@
                 </a>
             </div>
         </div>
+
+        {% if job.result.output_dir and job.result.generated_outputs %}
+        <div class="result-actions" style="margin-top: 20px;">
+            <h4>Infrastructure as Code Downloads</h4>
+
+            {% if job.result.generated_outputs.ansible or job.result.generated_outputs.ansible_full %}
+            <div class="download-section">
+                <h5>Ansible Playbooks</h5>
+                <div class="doc-buttons">
+                    {% if job.result.generated_outputs.ansible %}
+                    <a href="{{ url_for('download_output', output_dir=job.result.output_dir, output_type='ansible') }}" class="btn btn-secondary btn-sm">
+                        <span class="btn-icon">&#128230;</span>
+                        Basic Ansible (ZIP)
+                    </a>
+                    {% endif %}
+                    {% if job.result.generated_outputs.ansible_full %}
+                    <a href="{{ url_for('download_output', output_dir=job.result.output_dir, output_type='ansible-full') }}" class="btn btn-primary btn-sm">
+                        <span class="btn-icon">&#128230;</span>
+                        Full Recreation Ansible (ZIP)
+                    </a>
+                    {% endif %}
+                </div>
+                {% if job.result.generated_outputs.ansible_error %}
+                <small class="error-text">Ansible error: {{ job.result.generated_outputs.ansible_error }}</small>
+                {% endif %}
+                {% if job.result.generated_outputs.ansible_full_error %}
+                <small class="error-text">Ansible Full error: {{ job.result.generated_outputs.ansible_full_error }}</small>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            {% if job.result.generated_outputs.terraform_vsphere or job.result.generated_outputs.terraform_aws or job.result.generated_outputs.terraform_gcp or job.result.generated_outputs.terraform_azure %}
+            <div class="download-section" style="margin-top: 15px;">
+                <h5>Terraform Configurations</h5>
+                <div class="doc-buttons">
+                    {% if job.result.generated_outputs.terraform_vsphere %}
+                    <a href="{{ url_for('download_output', output_dir=job.result.output_dir, output_type='terraform-vsphere') }}" class="btn btn-secondary btn-sm">
+                        <span class="btn-icon">&#128230;</span>
+                        vSphere (ZIP)
+                    </a>
+                    {% endif %}
+                    {% if job.result.generated_outputs.terraform_aws %}
+                    <a href="{{ url_for('download_output', output_dir=job.result.output_dir, output_type='terraform-aws') }}" class="btn btn-secondary btn-sm">
+                        <span class="btn-icon">&#128230;</span>
+                        AWS (ZIP)
+                    </a>
+                    {% endif %}
+                    {% if job.result.generated_outputs.terraform_gcp %}
+                    <a href="{{ url_for('download_output', output_dir=job.result.output_dir, output_type='terraform-gcp') }}" class="btn btn-secondary btn-sm">
+                        <span class="btn-icon">&#128230;</span>
+                        GCP (ZIP)
+                    </a>
+                    {% endif %}
+                    {% if job.result.generated_outputs.terraform_azure %}
+                    <a href="{{ url_for('download_output', output_dir=job.result.output_dir, output_type='terraform-azure') }}" class="btn btn-secondary btn-sm">
+                        <span class="btn-icon">&#128230;</span>
+                        Azure (ZIP)
+                    </a>
+                    {% endif %}
+                </div>
+                <div class="doc-buttons" style="margin-top: 10px;">
+                    <a href="{{ url_for('download_output', output_dir=job.result.output_dir, output_type='all-terraform') }}" class="btn btn-primary btn-sm">
+                        <span class="btn-icon">&#128230;</span>
+                        All Terraform (ZIP)
+                    </a>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="download-section" style="margin-top: 15px;">
+                <h5>Complete Package</h5>
+                <div class="doc-buttons">
+                    <a href="{{ url_for('download_output', output_dir=job.result.output_dir, output_type='all') }}" class="btn btn-primary">
+                        <span class="btn-icon">&#128230;</span>
+                        Download All Outputs (ZIP)
+                    </a>
+                </div>
+            </div>
+
+            {% if job.result.generated_outputs.cost_estimate %}
+            <div class="download-section" style="margin-top: 15px;">
+                <h5>Cost Estimate</h5>
+                <div class="doc-buttons">
+                    <a href="{{ url_for('download_doc', filename=job.result.output_dir + '/cost-estimate.json') }}" class="btn btn-secondary btn-sm">
+                        <span class="btn-icon">&#128176;</span>
+                        Cost Estimate (JSON)
+                    </a>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
     </div>
     {% elif job.status == 'failed' %}
     <div class="error-section">

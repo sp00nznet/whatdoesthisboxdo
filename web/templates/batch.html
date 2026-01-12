@@ -34,6 +34,48 @@
             </div>
         </div>
 
+        <div class="form-section">
+            <h3>Analysis Options</h3>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="monitor_duration">Metrics Collection Duration (seconds)</label>
+                    <input type="number" id="monitor_duration" name="monitor_duration" value="0" min="0" max="600" step="10">
+                    <small>Collect real-time CPU, memory, and I/O metrics for each server (0 = disabled)</small>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group checkbox-group">
+                    <label>
+                        <input type="checkbox" name="generate_ansible" value="1" checked>
+                        Generate Ansible playbooks
+                    </label>
+                </div>
+                <div class="form-group checkbox-group">
+                    <label>
+                        <input type="checkbox" name="generate_ansible_full" value="1" checked>
+                        Generate full Ansible recreation playbooks
+                    </label>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group checkbox-group">
+                    <label>
+                        <input type="checkbox" name="generate_terraform" value="1" checked>
+                        Generate Terraform configs (vSphere)
+                    </label>
+                </div>
+                <div class="form-group checkbox-group">
+                    <label>
+                        <input type="checkbox" name="generate_cloud" value="1" checked>
+                        Generate cloud configs (AWS, GCP, Azure)
+                    </label>
+                </div>
+            </div>
+        </div>
+
         <div class="form-actions">
             <button type="submit" class="btn btn-primary btn-lg">
                 <span class="btn-icon">&#128640;</span>
