@@ -85,6 +85,21 @@ class WinRMExecutor:
             logger.error(f"Failed to connect to {self.config.hostname} via WinRM: {e}")
             return False
 
+    def _ensure_string(self, value) -> str:
+        """Ensure a value is a string, handling bytes, dicts, and other types"""
+        if value is None:
+            return ""
+        if isinstance(value, bytes):
+            return value.decode('utf-8', errors='ignore')
+        if isinstance(value, str):
+            return value
+        if isinstance(value, dict):
+            # If somehow we got a dict, convert to JSON string
+            import json
+            return json.dumps(value)
+        # For any other type, convert to string
+        return str(value)
+
     def execute(self, command: str, use_powershell: bool = True, timeout: int = None) -> Tuple[int, str, str]:
         """Execute a command on the remote Windows server"""
         if not self.connected or not self.session:
@@ -107,14 +122,9 @@ class WinRMExecutor:
             else:
                 result = self.session.run_cmd(command)
 
-            # Handle both bytes and string responses
-            stdout = result.std_out
-            stderr = result.std_err
-
-            if isinstance(stdout, bytes):
-                stdout = stdout.decode('utf-8', errors='ignore')
-            if isinstance(stderr, bytes):
-                stderr = stderr.decode('utf-8', errors='ignore')
+            # Ensure stdout and stderr are always strings
+            stdout = self._ensure_string(result.std_out)
+            stderr = self._ensure_string(result.std_err)
 
             return result.status_code, stdout, stderr
 
@@ -128,12 +138,8 @@ class WinRMExecutor:
                     ps_cmd = f'powershell -EncodedCommand {encoded}'
                     result = self.session.run_cmd(ps_cmd)
 
-                    stdout = result.std_out
-                    stderr = result.std_err
-                    if isinstance(stdout, bytes):
-                        stdout = stdout.decode('utf-8', errors='ignore')
-                    if isinstance(stderr, bytes):
-                        stderr = stderr.decode('utf-8', errors='ignore')
+                    stdout = self._ensure_string(result.std_out)
+                    stderr = self._ensure_string(result.std_err)
                     return result.status_code, stdout, stderr
                 except Exception as retry_error:
                     logger.error(f"Retry also failed: {retry_error}")

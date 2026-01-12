@@ -516,8 +516,14 @@ if (Test-Path '{escaped_path}') {{
                 result = json.loads(stdout)
                 if isinstance(result, str):
                     result = [result]
+                elif isinstance(result, dict):
+                    # Single command as dict, skip
+                    result = []
                 for i, line in enumerate(result):
-                    if line.strip():
+                    # Ensure line is a string
+                    if isinstance(line, dict):
+                        line = line.get('command', line.get('CommandLine', str(line)))
+                    if isinstance(line, str) and line.strip():
                         commands.append({
                             'command': line.strip(),
                             'user': user,
