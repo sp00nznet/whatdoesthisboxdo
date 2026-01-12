@@ -1,0 +1,4 @@
+hostname,username,password,port,os_type
+webserver.example.com,admin,your_password,22,linux
+database.example.com,root,db_password,22,linux
+winserver.example.com,Administrator,win_password,5985,windows

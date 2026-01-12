@@ -14,7 +14,23 @@ logger = logging.getLogger(__name__)
 class DocumentationGenerator:
     """Generates comprehensive, pretty system documentation with analysis opinions"""
 
-    def __init__(self, analysis_data: Dict[str, Any]):
+    def __init__(self, analysis_data: Dict[str, Any] = None):
+        """Initialize the documentation generator.
+
+        Args:
+            analysis_data: Optional dict containing analysis data. If not provided,
+                          must be passed to generate() or generate_html() methods.
+        """
+        if analysis_data:
+            self._set_data(analysis_data)
+        else:
+            self.data = {}
+            self.hostname = 'unknown'
+            self.os_info = {}
+            self.os_type = 'linux'
+
+    def _set_data(self, analysis_data: Dict[str, Any]):
+        """Set the analysis data for generation."""
         self.data = analysis_data
         self.hostname = analysis_data.get('hostname', 'unknown')
         self.os_info = analysis_data.get('os_info', {})
@@ -41,9 +57,27 @@ class DocumentationGenerator:
         else:
             return self.os_info.get('version', '')
 
-    def generate(self, output_path: str) -> str:
-        """Generate full documentation"""
-        os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else '.', exist_ok=True)
+    def generate(self, output_path_or_data=None) -> str:
+        """Generate full documentation.
+
+        Args:
+            output_path_or_data: Can be either:
+                - A string path to write the documentation to
+                - A dict of analysis data (in which case markdown is returned)
+                - None (uses existing data and returns markdown)
+
+        Returns:
+            If output_path provided: the output path
+            Otherwise: the generated markdown string
+        """
+        # Handle different argument types
+        if isinstance(output_path_or_data, dict):
+            self._set_data(output_path_or_data)
+            output_path = None
+        elif isinstance(output_path_or_data, str):
+            output_path = output_path_or_data
+        else:
+            output_path = None
 
         doc = self._generate_header()
         doc += self._generate_executive_summary()
@@ -67,11 +101,155 @@ class DocumentationGenerator:
         doc += self._generate_config_improvements_section()
         doc += self._generate_footer()
 
-        with open(output_path, 'w') as f:
-            f.write(doc)
+        if output_path:
+            os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else '.', exist_ok=True)
+            with open(output_path, 'w') as f:
+                f.write(doc)
+            logger.info(f"Documentation generated: {output_path}")
+            return output_path
 
-        logger.info(f"Documentation generated: {output_path}")
-        return output_path
+        return doc
+
+    def generate_html(self, analysis_data: Dict[str, Any] = None) -> str:
+        """Generate HTML documentation with embedded styles.
+
+        Args:
+            analysis_data: Optional dict containing analysis data.
+
+        Returns:
+            HTML string of the documentation.
+        """
+        if analysis_data:
+            self._set_data(analysis_data)
+
+        markdown_content = self.generate()
+
+        # Generate HTML with embedded styles
+        html = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{self.hostname} - System Documentation</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+    <style>
+        :root {{
+            --primary-color: #2563eb;
+            --text-color: #1e293b;
+            --text-muted: #64748b;
+            --bg-color: #f8fafc;
+            --card-bg: #ffffff;
+            --border-color: #e2e8f0;
+            --success-color: #22c55e;
+            --warning-color: #f59e0b;
+            --error-color: #ef4444;
+        }}
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: var(--text-color);
+            background: var(--bg-color);
+            padding: 2rem;
+        }}
+        .container {{
+            max-width: 1000px;
+            margin: 0 auto;
+            background: var(--card-bg);
+            padding: 2rem 3rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }}
+        h1 {{ font-size: 2rem; margin-bottom: 0.5rem; color: var(--primary-color); }}
+        h2 {{ font-size: 1.5rem; margin: 2rem 0 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid var(--border-color); }}
+        h3 {{ font-size: 1.25rem; margin: 1.5rem 0 0.75rem; color: var(--text-color); }}
+        h4 {{ font-size: 1rem; margin: 1rem 0 0.5rem; }}
+        p {{ margin-bottom: 1rem; }}
+        a {{ color: var(--primary-color); text-decoration: none; }}
+        a:hover {{ text-decoration: underline; }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+            font-size: 0.875rem;
+        }}
+        th, td {{
+            padding: 0.75rem;
+            text-align: left;
+            border: 1px solid var(--border-color);
+        }}
+        th {{ background: #f1f5f9; font-weight: 600; }}
+        tr:hover td {{ background: #f8fafc; }}
+        code {{
+            background: #f1f5f9;
+            padding: 0.125rem 0.375rem;
+            border-radius: 4px;
+            font-size: 0.875em;
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+        }}
+        pre {{
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 1rem;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 1rem 0;
+        }}
+        pre code {{ background: none; padding: 0; color: inherit; }}
+        blockquote {{
+            border-left: 4px solid var(--primary-color);
+            padding-left: 1rem;
+            margin: 1rem 0;
+            color: var(--text-muted);
+            font-style: italic;
+        }}
+        ul, ol {{ margin: 1rem 0 1rem 1.5rem; }}
+        li {{ margin-bottom: 0.5rem; }}
+        details {{
+            background: #f8fafc;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 0.75rem;
+            margin: 1rem 0;
+        }}
+        summary {{
+            cursor: pointer;
+            font-weight: 500;
+            padding: 0.5rem;
+        }}
+        summary:hover {{ color: var(--primary-color); }}
+        hr {{ border: none; border-top: 1px solid var(--border-color); margin: 2rem 0; }}
+        .status-healthy {{ color: var(--success-color); }}
+        .status-warning {{ color: var(--warning-color); }}
+        .status-critical {{ color: var(--error-color); }}
+        @media print {{
+            body {{ background: white; padding: 0; }}
+            .container {{ box-shadow: none; padding: 1rem; }}
+            details {{ open: true; }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="content"></div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script>
+        const markdown = {repr(markdown_content)};
+        marked.setOptions({{
+            highlight: function(code, lang) {{
+                if (lang && hljs.getLanguage(lang)) {{
+                    return hljs.highlight(code, {{ language: lang }}).value;
+                }}
+                return hljs.highlightAuto(code).value;
+            }}
+        }});
+        document.getElementById('content').innerHTML = marked.parse(markdown);
+    </script>
+</body>
+</html>'''
+        return html
 
     def _generate_header(self) -> str:
         """Generate beautiful document header"""
@@ -1586,36 +1764,6 @@ services:
                     doc += f"  {svc['service']}_data:\n"
 
             doc += "```\n\n"
-
-        # Migration steps
-        doc += """### Container Migration Steps
-
-1. **Audit Dependencies**
-   - Document all installed packages
-   - Identify configuration files to mount
-   - List environment variables needed
-
-2. **Create Dockerfile**
-   - Start with official base images
-   - Use multi-stage builds for compiled languages
-   - Keep images minimal (alpine variants)
-
-3. **Data Management**
-   - Use named volumes for persistent data
-   - Set up backup procedures for volumes
-   - Test data restore procedures
-
-4. **Network Configuration**
-   - Create dedicated Docker networks
-   - Use service names for inter-container communication
-   - Expose only necessary ports to host
-
-5. **Orchestration Decision**
-   - Single server: Docker Compose is sufficient
-   - Multiple servers: Consider Docker Swarm or Kubernetes
-   - Cloud deployment: Use managed container services (ECS, GKE, AKS)
-
-"""
 
         # Benefits/considerations
         doc += """### Benefits vs Trade-offs

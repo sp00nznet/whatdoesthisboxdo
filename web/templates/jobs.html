@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block title %}Jobs - WhatDoesThisBoxDo{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Analysis Jobs</h1>
+    {% if batch_id %}
+    <p>Showing jobs for batch: <code>{{ batch_id }}</code></p>
+    <a href="{{ url_for('jobs_list') }}" class="btn btn-secondary btn-sm">View All Jobs</a>
+    {% else %}
+    <p>View all running and completed analysis jobs</p>
+    {% endif %}
+</div>
+
+{% if jobs %}
+<div class="jobs-list">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Hostname</th>
+                <th>Status</th>
+                <th>Message</th>
+                <th>Created</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for job in jobs %}
+            <tr class="job-row status-{{ job.status }}">
+                <td>
+                    <strong>{{ job.hostname }}</strong>
+                </td>
+                <td>
+                    <span class="status-badge status-{{ job.status }}">
+                        {% if job.status == 'pending' %}
+                        &#9203;
+                        {% elif job.status == 'running' %}
+                        &#9881;
+                        {% elif job.status == 'completed' %}
+                        &#10004;
+                        {% elif job.status == 'failed' %}
+                        &#10006;
+                        {% endif %}
+                        {{ job.status|capitalize }}
+                    </span>
+                </td>
+                <td>{{ job.message }}</td>
+                <td>{{ job.created[:19].replace('T', ' ') if job.created else 'N/A' }}</td>
+                <td>
+                    <a href="{{ url_for('job_status', job_id=job.id) }}" class="btn btn-secondary btn-sm">View</a>
+                    {% if job.status == 'completed' and job.result %}
+                    <a href="{{ url_for('view_doc', filename=job.result.html_file) }}" class="btn btn-primary btn-sm">View Docs</a>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="empty-state">
+    <div class="empty-icon">&#128203;</div>
+    <h3>No Jobs Yet</h3>
+    <p>Start by analyzing a server or uploading a batch CSV file.</p>
+    <div class="empty-actions">
+        <a href="{{ url_for('analyze') }}" class="btn btn-primary">Analyze Server</a>
+        <a href="{{ url_for('batch') }}" class="btn btn-secondary">Batch Upload</a>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Auto-refresh if there are running jobs
+const hasRunningJobs = document.querySelectorAll('.status-running, .status-pending').length > 0;
+if (hasRunningJobs) {
+    setTimeout(function() {
+        window.location.reload();
+    }, 5000);
+}
+</script>
+{% endblock %}

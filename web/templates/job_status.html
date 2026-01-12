@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block title %}Job Status - {{ job.hostname }} - WhatDoesThisBoxDo{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Job Status</h1>
+    <p>Analyzing: <strong>{{ job.hostname }}</strong></p>
+</div>
+
+<div class="job-details">
+    <div class="status-card status-{{ job.status }}">
+        <div class="status-icon">
+            {% if job.status == 'pending' %}
+            &#9203;
+            {% elif job.status == 'running' %}
+            <span class="spinner">&#9881;</span>
+            {% elif job.status == 'completed' %}
+            &#10004;
+            {% elif job.status == 'failed' %}
+            &#10006;
+            {% endif %}
+        </div>
+        <div class="status-info">
+            <h2>{{ job.status|capitalize }}</h2>
+            <p>{{ job.message }}</p>
+        </div>
+    </div>
+
+    <div class="job-meta">
+        <div class="meta-item">
+            <span class="meta-label">Job ID:</span>
+            <code>{{ job_id }}</code>
+        </div>
+        <div class="meta-item">
+            <span class="meta-label">Created:</span>
+            <span>{{ job.created[:19].replace('T', ' ') if job.created else 'N/A' }}</span>
+        </div>
+        {% if job.batch_id %}
+        <div class="meta-item">
+            <span class="meta-label">Batch ID:</span>
+            <code>{{ job.batch_id }}</code>
+        </div>
+        {% endif %}
+    </div>
+
+    {% if job.status == 'completed' and job.result %}
+    <div class="result-section">
+        <h3>Analysis Complete</h3>
+
+        <div class="result-summary">
+            {% if job.result.data %}
+            <div class="summary-grid">
+                <div class="summary-item">
+                    <span class="summary-label">Hostname</span>
+                    <span class="summary-value">{{ job.result.data.hostname or job.hostname }}</span>
+                </div>
+                {% if job.result.data.os %}
+                <div class="summary-item">
+                    <span class="summary-label">Operating System</span>
+                    <span class="summary-value">{{ job.result.data.os.name }} {{ job.result.data.os.version }}</span>
+                </div>
+                {% endif %}
+                {% if job.result.data.hardware %}
+                <div class="summary-item">
+                    <span class="summary-label">CPU</span>
+                    <span class="summary-value">{{ job.result.data.hardware.cpu_model }} ({{ job.result.data.hardware.cpu_cores }} cores)</span>
+                </div>
+                <div class="summary-item">
+                    <span class="summary-label">Memory</span>
+                    <span class="summary-value">{{ job.result.data.hardware.memory_total }}</span>
+                </div>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="result-actions">
+            <h4>Generated Documentation</h4>
+            <div class="doc-buttons">
+                <a href="{{ url_for('view_doc', filename=job.result.html_file) }}" class="btn btn-primary" target="_blank">
+                    <span class="btn-icon">&#128196;</span>
+                    View HTML
+                </a>
+                <a href="{{ url_for('view_doc', filename=job.result.markdown_file) }}" class="btn btn-secondary" target="_blank">
+                    <span class="btn-icon">&#128221;</span>
+                    View Markdown
+                </a>
+                <a href="{{ url_for('view_doc', filename=job.result.json_file) }}" class="btn btn-secondary" target="_blank">
+                    <span class="btn-icon">&#128190;</span>
+                    View JSON
+                </a>
+            </div>
+            <div class="doc-buttons" style="margin-top: 10px;">
+                <a href="{{ url_for('download_doc', filename=job.result.html_file) }}" class="btn btn-secondary btn-sm">
+                    Download HTML
+                </a>
+                <a href="{{ url_for('download_doc', filename=job.result.markdown_file) }}" class="btn btn-secondary btn-sm">
+                    Download Markdown
+                </a>
+                <a href="{{ url_for('download_doc', filename=job.result.json_file) }}" class="btn btn-secondary btn-sm">
+                    Download JSON
+                </a>
+            </div>
+        </div>
+    </div>
+    {% elif job.status == 'failed' %}
+    <div class="error-section">
+        <h3>Error Details</h3>
+        <pre class="error-output">{{ job.error or job.message }}</pre>
+        <div class="error-actions">
+            <a href="{{ url_for('analyze') }}" class="btn btn-primary">Try Again</a>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<div class="job-actions">
+    <a href="{{ url_for('jobs_list') }}" class="btn btn-secondary">&larr; Back to Jobs</a>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% if job.status in ['pending', 'running'] %}
+<script>
+// Auto-refresh while job is running
+setTimeout(function() {
+    window.location.reload();
+}, 3000);
+</script>
+{% endif %}
+{% endblock %}

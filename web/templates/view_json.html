@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block title %}{{ filename }} - WhatDoesThisBoxDo{% endblock %}
+
+{% block head %}
+<style>
+.json-viewer {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    padding: 1.5rem;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+    font-size: 13px;
+    line-height: 1.5;
+}
+.json-key { color: #9cdcfe; }
+.json-string { color: #ce9178; }
+.json-number { color: #b5cea8; }
+.json-boolean { color: #569cd6; }
+.json-null { color: #569cd6; }
+.json-bracket { color: #ffd700; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>{{ filename }}</h1>
+    <div class="page-actions">
+        <a href="{{ url_for('download_doc', filename=filename) }}" class="btn btn-secondary">Download</a>
+        <a href="{{ url_for('docs_list') }}" class="btn btn-secondary">Back to Docs</a>
+    </div>
+</div>
+
+<div class="json-viewer">
+    <pre id="json-content">{{ data | tojson(indent=2) }}</pre>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const content = document.getElementById('json-content');
+    const json = content.textContent;
+
+    // Simple syntax highlighting
+    const highlighted = json
+        .replace(/"([^"]+)":/g, '<span class="json-key">"$1"</span>:')
+        .replace(/: "([^"]*)"/g, ': <span class="json-string">"$1"</span>')
+        .replace(/: (\d+\.?\d*)/g, ': <span class="json-number">$1</span>')
+        .replace(/: (true|false)/g, ': <span class="json-boolean">$1</span>')
+        .replace(/: (null)/g, ': <span class="json-null">$1</span>');
+
+    content.innerHTML = highlighted;
+});
+</script>
+{% endblock %}

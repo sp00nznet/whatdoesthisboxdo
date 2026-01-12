@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+
+{% block title %}WhatDoesThisBoxDo - Server Documentation Tool{% endblock %}
+
+{% block content %}
+<div class="hero">
+    <h1>WhatDoesThisBoxDo</h1>
+    <p class="hero-subtitle">Automatically analyze servers and generate comprehensive documentation</p>
+    <div class="hero-actions">
+        <a href="{{ url_for('analyze') }}" class="btn btn-primary btn-lg">Analyze Single Server</a>
+        <a href="{{ url_for('batch') }}" class="btn btn-secondary btn-lg">Batch Process (CSV)</a>
+    </div>
+</div>
+
+<section class="features">
+    <h2>Features</h2>
+    <div class="feature-grid">
+        <div class="feature-card">
+            <div class="feature-icon">&#128269;</div>
+            <h3>Deep Analysis</h3>
+            <p>Comprehensive system analysis including OS, hardware, network, services, Docker containers, and more.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">&#128196;</div>
+            <h3>Rich Documentation</h3>
+            <p>Generate beautiful HTML and Markdown documentation with security assessments and recommendations.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">&#128187;</div>
+            <h3>Multi-Platform</h3>
+            <p>Support for Linux and Windows servers via SSH and WinRM connections.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">&#128202;</div>
+            <h3>Batch Processing</h3>
+            <p>Upload a CSV file to analyze multiple servers at once with parallel processing.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">&#128274;</div>
+            <h3>Security Assessment</h3>
+            <p>Built-in security checks for firewalls, open ports, services, and hardening recommendations.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">&#9881;</div>
+            <h3>Ansible Ready</h3>
+            <p>Generate Ansible playbooks to recreate server configurations automatically.</p>
+        </div>
+    </div>
+</section>
+
+<section class="quick-start">
+    <h2>Quick Start</h2>
+    <div class="steps">
+        <div class="step">
+            <span class="step-number">1</span>
+            <h3>Connect</h3>
+            <p>Enter server credentials (hostname, username, password or SSH key)</p>
+        </div>
+        <div class="step">
+            <span class="step-number">2</span>
+            <h3>Analyze</h3>
+            <p>The tool connects and gathers comprehensive system information</p>
+        </div>
+        <div class="step">
+            <span class="step-number">3</span>
+            <h3>Document</h3>
+            <p>View and download beautiful documentation in HTML, Markdown, or JSON</p>
+        </div>
+    </div>
+</section>
+{% endblock %}
