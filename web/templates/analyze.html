@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block title %}Analyze Server - WhatDoesThisBoxDo{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Analyze Server</h1>
+    <p>Enter server connection details to start analysis</p>
+</div>
+
+<div class="form-container">
+    <form method="POST" class="analyze-form">
+        <div class="form-section">
+            <h3>Connection Details</h3>
+
+            <div class="form-group">
+                <label for="hostname">Hostname / IP Address <span class="required">*</span></label>
+                <input type="text" id="hostname" name="hostname" placeholder="192.168.1.100 or server.example.com" required>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="port">Port</label>
+                    <input type="number" id="port" name="port" value="22" min="1" max="65535">
+                </div>
+                <div class="form-group">
+                    <label for="os_type">Operating System</label>
+                    <select id="os_type" name="os_type">
+                        <option value="linux">Linux (SSH)</option>
+                        <option value="windows">Windows (WinRM)</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div class="form-section">
+            <h3>Authentication</h3>
+
+            <div class="form-group">
+                <label for="username">Username <span class="required">*</span></label>
+                <input type="text" id="username" name="username" placeholder="root or administrator" required>
+            </div>
+
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" placeholder="Enter password">
+                <small>Leave empty if using SSH key</small>
+            </div>
+
+            <div class="form-group">
+                <label for="ssh_key">SSH Private Key (optional)</label>
+                <textarea id="ssh_key" name="ssh_key" rows="4" placeholder="Paste your SSH private key here..."></textarea>
+                <small>For Linux servers: paste the contents of your private key file</small>
+            </div>
+        </div>
+
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary btn-lg">
+                <span class="btn-icon">&#9654;</span>
+                Start Analysis
+            </button>
+        </div>
+    </form>
+</div>
+
+<div class="info-box">
+    <h4>Note</h4>
+    <ul>
+        <li>For Linux servers, ensure SSH is enabled and accessible</li>
+        <li>For Windows servers, ensure WinRM is configured (default port: 5985/5986)</li>
+        <li>The account should have sufficient privileges to gather system information</li>
+        <li>Analysis typically takes 1-3 minutes depending on system complexity</li>
+    </ul>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('os_type').addEventListener('change', function() {
+    const port = document.getElementById('port');
+    const sshKeyGroup = document.getElementById('ssh_key').parentElement;
+
+    if (this.value === 'windows') {
+        port.value = '5985';
+        sshKeyGroup.style.display = 'none';
+    } else {
+        port.value = '22';
+        sshKeyGroup.style.display = 'block';
+    }
+});
+</script>
+{% endblock %}

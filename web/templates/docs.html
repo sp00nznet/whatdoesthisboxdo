@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}Documentation - WhatDoesThisBoxDo{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Generated Documentation</h1>
+    <p>View and download documentation from previous analyses</p>
+</div>
+
+{% if docs %}
+<div class="docs-list">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Filename</th>
+                <th>Type</th>
+                <th>Size</th>
+                <th>Last Modified</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for doc in docs %}
+            <tr>
+                <td>
+                    <code>{{ doc.name }}</code>
+                </td>
+                <td>
+                    <span class="type-badge type-{{ doc.type|lower }}">{{ doc.type }}</span>
+                </td>
+                <td>{{ (doc.size / 1024)|round(1) }} KB</td>
+                <td>{{ doc.modified[:19].replace('T', ' ') }}</td>
+                <td>
+                    <a href="{{ url_for('view_doc', filename=doc.name) }}" class="btn btn-primary btn-sm" target="_blank">View</a>
+                    <a href="{{ url_for('download_doc', filename=doc.name) }}" class="btn btn-secondary btn-sm">Download</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="empty-state">
+    <div class="empty-icon">&#128195;</div>
+    <h3>No Documentation Yet</h3>
+    <p>Analyze a server to generate documentation.</p>
+    <div class="empty-actions">
+        <a href="{{ url_for('analyze') }}" class="btn btn-primary">Analyze Server</a>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

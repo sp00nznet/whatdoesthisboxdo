@@ -16,3 +16,10 @@ proxmoxer>=2.0.0
 
 # For better output
 rich>=13.0.0
+
+# Web interface
+flask>=3.0.0
+gunicorn>=21.0.0
+
+# WinRM connectivity (optional, for Windows servers)
+pywinrm>=0.4.3

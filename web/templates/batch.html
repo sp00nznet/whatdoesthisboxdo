@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+
+{% block title %}Batch Processing - WhatDoesThisBoxDo{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Batch Processing</h1>
+    <p>Upload a CSV file to analyze multiple servers at once</p>
+</div>
+
+<div class="form-container">
+    <form method="POST" enctype="multipart/form-data" class="batch-form">
+        <div class="form-section">
+            <h3>Upload CSV File</h3>
+
+            <div class="form-group file-upload">
+                <label for="csv_file" class="file-label">
+                    <span class="file-icon">&#128196;</span>
+                    <span class="file-text">Choose CSV file or drag and drop</span>
+                    <span class="file-name"></span>
+                </label>
+                <input type="file" id="csv_file" name="csv_file" accept=".csv" required>
+            </div>
+        </div>
+
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary btn-lg">
+                <span class="btn-icon">&#128640;</span>
+                Start Batch Analysis
+            </button>
+        </div>
+    </form>
+</div>
+
+<div class="info-box">
+    <h4>CSV Format</h4>
+    <p>Your CSV file should have the following columns (header row required):</p>
+    <table class="csv-format-table">
+        <thead>
+            <tr>
+                <th>Column</th>
+                <th>Required</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><code>hostname</code></td>
+                <td>Yes</td>
+                <td>Server hostname or IP address</td>
+            </tr>
+            <tr>
+                <td><code>username</code></td>
+                <td>Yes</td>
+                <td>Login username</td>
+            </tr>
+            <tr>
+                <td><code>password</code></td>
+                <td>No*</td>
+                <td>Login password</td>
+            </tr>
+            <tr>
+                <td><code>ssh_key</code></td>
+                <td>No*</td>
+                <td>Path to SSH private key</td>
+            </tr>
+            <tr>
+                <td><code>port</code></td>
+                <td>No</td>
+                <td>Connection port (default: 22)</td>
+            </tr>
+            <tr>
+                <td><code>os_type</code></td>
+                <td>No</td>
+                <td>linux or windows (default: linux)</td>
+            </tr>
+        </tbody>
+    </table>
+    <p><small>* Either password or ssh_key is required</small></p>
+
+    <h4>Example CSV</h4>
+    <pre class="csv-example">hostname,username,password,port,os_type
+webserver1.example.com,admin,secretpass,22,linux
+192.168.1.50,root,password123,22,linux
+winserver.local,Administrator,WinPass123,5985,windows</pre>
+
+    <a href="{{ url_for('static', filename='sample_servers.csv') }}" class="btn btn-secondary btn-sm" download>
+        Download Sample CSV
+    </a>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const fileInput = document.getElementById('csv_file');
+const fileLabel = document.querySelector('.file-label');
+const fileName = document.querySelector('.file-name');
+
+fileInput.addEventListener('change', function() {
+    if (this.files.length > 0) {
+        fileName.textContent = this.files[0].name;
+        fileLabel.classList.add('has-file');
+    } else {
+        fileName.textContent = '';
+        fileLabel.classList.remove('has-file');
+    }
+});
+
+// Drag and drop
+fileLabel.addEventListener('dragover', function(e) {
+    e.preventDefault();
+    this.classList.add('drag-over');
+});
+
+fileLabel.addEventListener('dragleave', function(e) {
+    e.preventDefault();
+    this.classList.remove('drag-over');
+});
+
+fileLabel.addEventListener('drop', function(e) {
+    e.preventDefault();
+    this.classList.remove('drag-over');
+    if (e.dataTransfer.files.length > 0) {
+        fileInput.files = e.dataTransfer.files;
+        fileName.textContent = e.dataTransfer.files[0].name;
+        this.classList.add('has-file');
+    }
+});
+</script>
+{% endblock %}
