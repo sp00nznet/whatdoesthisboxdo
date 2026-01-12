@@ -1068,42 +1068,112 @@ class DocumentationGenerator:
 """
         checks = []
 
-        # Check for SSH
-        ssh_active = any('ssh' in s.get('name', '').lower() for s in services if s.get('active') == 'active')
-        if ssh_active:
-            checks.append(("[OK] SSH service is running for remote access", True))
-        else:
-            checks.append(("[--] SSH service not detected", False))
+        # Get service names handling both Linux and Windows states
+        service_names = [s.get('name', '').lower() for s in services
+                        if s.get('active') in ['active', 'running'] or s.get('status') in ['running', 'Running']]
 
-        # Check for firewall
-        firewall_active = any(fw in [s.get('name', '').lower() for s in services] for fw in ['ufw', 'firewalld', 'iptables'])
-        if firewall_active:
-            checks.append(("[OK] Firewall service detected", True))
-        else:
-            checks.append(("[!!] No firewall service detected - recommend enabling ufw or firewalld", False))
+        if self.os_type == 'windows':
+            # Windows-specific security checks
 
-        # Check for exposed risky ports
-        risky_ports = [21, 23, 25, 3306, 5432, 6379, 27017]
-        exposed_risky = [p for p in listening if p.get('port') in risky_ports and p.get('addr') in ['0.0.0.0', '*', '::']]
-        if exposed_risky:
-            ports_str = ', '.join([str(p.get('port')) for p in exposed_risky])
-            checks.append((f"[!!] Sensitive ports exposed publicly: {ports_str}", False))
-        else:
-            checks.append(("[OK] No sensitive database/service ports exposed publicly", True))
+            # Check for Windows Firewall
+            firewall_active = any(fw in service_names for fw in ['mpssvc', 'windows firewall', 'bfe'])
+            if firewall_active:
+                checks.append(("[OK] Windows Firewall service is running", True))
+            else:
+                checks.append(("[!!] Windows Firewall not detected - security risk", False))
 
-        # Check for fail2ban
-        fail2ban = any('fail2ban' in s.get('name', '').lower() for s in services)
-        if fail2ban:
-            checks.append(("[OK] fail2ban is running for brute-force protection", True))
-        else:
-            checks.append(("[--] fail2ban not detected - consider installing for SSH protection", False))
+            # Check for Windows Defender
+            defender_active = any(d in service_names for d in ['windefend', 'windows defender', 'msmpeng'])
+            if defender_active:
+                checks.append(("[OK] Windows Defender is running", True))
+            else:
+                checks.append(("[--] Windows Defender not detected - ensure alternative AV is installed", False))
 
-        # Check for automatic updates
-        unattended = any('unattended' in p.get('name', '').lower() for p in packages)
-        if unattended:
-            checks.append(("[OK] Automatic security updates appear to be configured", True))
+            # Check for Remote Desktop
+            rdp_active = any('termservice' in s for s in service_names)
+            if rdp_active:
+                checks.append(("[!!] Remote Desktop Services enabled - ensure NLA is required", False))
+            else:
+                checks.append(("[OK] Remote Desktop Services not running", True))
+
+            # Check for WinRM
+            winrm_active = any('winrm' in s for s in service_names)
+            if winrm_active:
+                checks.append(("[--] WinRM is enabled - ensure proper authentication is configured", False))
+
+            # Check for exposed risky ports (Windows-specific)
+            risky_ports = [21, 23, 445, 1433, 3389, 5985, 5986]
+            exposed_risky = [p for p in listening if p.get('port') in risky_ports and p.get('addr') in ['0.0.0.0', '*', '::']]
+            if exposed_risky:
+                ports_str = ', '.join([str(p.get('port')) for p in exposed_risky])
+                checks.append((f"[!!] Sensitive ports exposed: {ports_str} (consider firewall rules)", False))
+            else:
+                checks.append(("[OK] No sensitive ports exposed publicly", True))
+
+            # Check for Windows Update service
+            wuauserv = any('wuauserv' in s for s in service_names)
+            if wuauserv:
+                checks.append(("[OK] Windows Update service is running", True))
+            else:
+                checks.append(("[!!] Windows Update service not running - security risk", False))
+
+            # Check for Event Log
+            eventlog = any('eventlog' in s for s in service_names)
+            if eventlog:
+                checks.append(("[OK] Event logging is enabled", True))
+            else:
+                checks.append(("[!!] Event logging not detected - enable for audit compliance", False))
+
+            # Check for LAPS (if domain-joined, look for LAPS-related services)
+            # This is informational since LAPS runs as scheduled tasks
+
         else:
-            checks.append(("[--] Automatic updates not detected - consider enabling", False))
+            # Linux-specific security checks
+
+            # Check for SSH
+            ssh_active = any('ssh' in s for s in service_names)
+            if ssh_active:
+                checks.append(("[OK] SSH service is running for remote access", True))
+            else:
+                checks.append(("[--] SSH service not detected", False))
+
+            # Check for firewall
+            firewall_active = any(fw in service_names for fw in ['ufw', 'firewalld', 'iptables', 'nftables'])
+            if firewall_active:
+                checks.append(("[OK] Firewall service detected", True))
+            else:
+                checks.append(("[!!] No firewall service detected - recommend enabling ufw or firewalld", False))
+
+            # Check for exposed risky ports (Linux)
+            risky_ports = [21, 23, 25, 3306, 5432, 6379, 27017]
+            exposed_risky = [p for p in listening if p.get('port') in risky_ports and p.get('addr') in ['0.0.0.0', '*', '::']]
+            if exposed_risky:
+                ports_str = ', '.join([str(p.get('port')) for p in exposed_risky])
+                checks.append((f"[!!] Sensitive ports exposed publicly: {ports_str}", False))
+            else:
+                checks.append(("[OK] No sensitive database/service ports exposed publicly", True))
+
+            # Check for fail2ban
+            fail2ban = any('fail2ban' in s for s in service_names)
+            if fail2ban:
+                checks.append(("[OK] fail2ban is running for brute-force protection", True))
+            else:
+                checks.append(("[--] fail2ban not detected - consider installing for SSH protection", False))
+
+            # Check for automatic updates
+            unattended = any('unattended' in p.get('name', '').lower() for p in packages)
+            if unattended:
+                checks.append(("[OK] Automatic security updates appear to be configured", True))
+            else:
+                checks.append(("[--] Automatic updates not detected - consider enabling", False))
+
+            # Check for SELinux/AppArmor
+            selinux = any('selinux' in s for s in service_names)
+            apparmor = any('apparmor' in s for s in service_names)
+            if selinux or apparmor:
+                checks.append(("[OK] Mandatory Access Control (SELinux/AppArmor) detected", True))
+            else:
+                checks.append(("[--] No MAC system detected - consider enabling SELinux or AppArmor", False))
 
         for check, is_good in checks:
             doc += f"- {check}\n"
@@ -1774,6 +1844,183 @@ ClientAliveCountMax 2
 X11Forwarding no
 AllowTcpForwarding no
 PermitTunnel no'''
+            })
+
+        # ===================
+        # WINDOWS-SPECIFIC IMPROVEMENTS
+        # ===================
+
+        # IIS Web Server improvements
+        if any(iis in service_names + process_names for iis in ['w3svc', 'iisadmin', 'w3wp']):
+            improvements.append({
+                'service': 'IIS',
+                'category': 'Web Server',
+                'suggestions': [
+                    'Enable dynamic and static compression',
+                    'Configure application pool recycling schedule',
+                    'Set idle timeout for application pools',
+                    'Enable HTTP/2 for improved performance',
+                    'Configure request filtering and URL rewrite rules',
+                    'Implement output caching for static content',
+                    'Enable Failed Request Tracing for debugging'
+                ],
+                'config_snippet': '''<!-- web.config optimization -->
+<system.webServer>
+  <httpCompression>
+    <dynamicTypes>
+      <add mimeType="application/json" enabled="true"/>
+    </dynamicTypes>
+  </httpCompression>
+  <urlCompression doStaticCompression="true" doDynamicCompression="true"/>
+  <security>
+    <requestFiltering>
+      <requestLimits maxAllowedContentLength="30000000"/>
+    </requestFiltering>
+  </security>
+  <httpProtocol>
+    <customHeaders>
+      <add name="X-Content-Type-Options" value="nosniff"/>
+      <add name="X-Frame-Options" value="SAMEORIGIN"/>
+    </customHeaders>
+  </httpProtocol>
+</system.webServer>'''
+            })
+
+        # SQL Server improvements
+        if any(sql in service_names + process_names for sql in ['mssqlserver', 'sqlservr', 'mssql']):
+            buffer_pool_mb = max(1024, int(total_mem_gb * 0.75 * 1024))
+            improvements.append({
+                'service': 'SQL Server',
+                'category': 'Database',
+                'suggestions': [
+                    f'Set max server memory to {buffer_pool_mb}MB (75% of RAM)',
+                    'Enable instant file initialization for faster restores',
+                    'Configure TempDB with multiple data files (1 per CPU core, up to 8)',
+                    'Enable Query Store for performance insights',
+                    'Set cost threshold for parallelism (recommend 50)',
+                    'Configure backup compression by default',
+                    'Enable transparent data encryption (TDE) for security',
+                    'Set up database mail for alerts'
+                ],
+                'config_snippet': f'''-- SQL Server optimization
+EXEC sp_configure 'max server memory', {buffer_pool_mb};
+EXEC sp_configure 'cost threshold for parallelism', 50;
+EXEC sp_configure 'max degree of parallelism', 4;
+EXEC sp_configure 'backup compression default', 1;
+RECONFIGURE;
+
+-- Enable Query Store on databases
+ALTER DATABASE [YourDB] SET QUERY_STORE = ON;
+
+-- TempDB optimization (run and restart)
+ALTER DATABASE tempdb ADD FILE (NAME = tempdev2, FILENAME = 'T:\\TempDB\\tempdb2.ndf', SIZE = 1024MB);'''
+            })
+
+        # Hyper-V improvements
+        if any(hv in service_names + process_names for hv in ['vmms', 'vmcompute', 'vmwp']):
+            improvements.append({
+                'service': 'Hyper-V',
+                'category': 'Virtualization',
+                'suggestions': [
+                    'Use Generation 2 VMs for UEFI and better performance',
+                    'Enable Secure Boot on VMs where possible',
+                    'Configure dynamic memory with appropriate min/max',
+                    'Use fixed-size VHDXs for production workloads',
+                    'Enable SR-IOV for network-intensive VMs',
+                    'Configure VM checkpoints sparingly in production',
+                    'Use Cluster Shared Volumes for HA deployments',
+                    'Enable Replica for disaster recovery'
+                ],
+                'config_snippet': '''# PowerShell Hyper-V optimization
+# Set VM memory
+Set-VMMemory -VMName "VM1" -DynamicMemoryEnabled $true -MinimumBytes 2GB -MaximumBytes 8GB
+
+# Enable virtual TPM for Secure Boot
+Set-VMSecurity -VMName "VM1" -VirtualizationBasedSecurityOptOut $false
+Enable-VMTPM -VMName "VM1"
+
+# Configure high availability
+Enable-VMReplication -VMName "VM1" -ReplicaServerName "HVReplica01" -ReplicaServerPort 443'''
+            })
+
+        # Veeam Backup improvements
+        if any(v in name for name in service_names + process_names for v in ['veeam', 'veeambackup']):
+            improvements.append({
+                'service': 'Veeam Backup',
+                'category': 'Backup & DR',
+                'suggestions': [
+                    'Configure backup copy jobs for 3-2-1 rule compliance',
+                    'Enable GFS (Grandfather-Father-Son) retention policy',
+                    'Use incremental backup with periodic synthetic fulls',
+                    'Configure backup I/O control to prevent production impact',
+                    'Enable encryption for backup files and traffic',
+                    'Set up SureBackup for automated recovery testing',
+                    'Configure email notifications and SNMP monitoring',
+                    'Use WAN accelerators for remote backup copy jobs'
+                ],
+                'config_snippet': '''# Veeam Best Practices
+# - Use ReFS for backup repository (block cloning support)
+# - Allocate 1 CPU core per 3 concurrent tasks
+# - Reserve 4GB RAM + 500MB per concurrent task
+# - Use fast storage for backup proxy
+# - Enable CBT (Changed Block Tracking) on VMware VMs
+# - Schedule synthetic fulls during maintenance windows'''
+            })
+
+        # Active Directory improvements
+        if any(ad in service_names for ad in ['ntds', 'adws', 'kdc']):
+            improvements.append({
+                'service': 'Active Directory',
+                'category': 'Identity',
+                'suggestions': [
+                    'Enable AD Recycle Bin for object recovery',
+                    'Configure fine-grained password policies',
+                    'Enable Protected Users security group',
+                    'Implement LAPS for local admin passwords',
+                    'Configure audit policies for security monitoring',
+                    'Set up Azure AD Connect for hybrid identity',
+                    'Enable Credential Guard on DCs',
+                    'Regular DCDIAG and repadmin health checks'
+                ],
+                'config_snippet': '''# PowerShell AD hardening
+# Enable Recycle Bin (forest-wide, one-time)
+Enable-ADOptionalFeature -Identity "Recycle Bin Feature" -Scope ForestOrConfigurationSet -Target (Get-ADForest).Name
+
+# Enable advanced audit policies
+auditpol /set /subcategory:"Logon" /success:enable /failure:enable
+auditpol /set /subcategory:"Account Lockout" /success:enable /failure:enable
+
+# Protected Users group
+Add-ADGroupMember -Identity "Protected Users" -Members "AdminUser"'''
+            })
+
+        # Windows Server general hardening
+        if self.os_type == 'windows' and not improvements:
+            improvements.append({
+                'service': 'Windows Server',
+                'category': 'Security Hardening',
+                'suggestions': [
+                    'Apply CIS Benchmark or STIG hardening',
+                    'Enable Windows Defender Credential Guard',
+                    'Configure Windows Firewall with Advanced Security',
+                    'Enable PowerShell script block logging',
+                    'Disable SMBv1 protocol',
+                    'Configure NTP for accurate time sync',
+                    'Enable BitLocker for drive encryption',
+                    'Configure Windows Event Forwarding for centralized logging'
+                ],
+                'config_snippet': '''# PowerShell hardening commands
+# Disable SMBv1
+Disable-WindowsOptionalFeature -Online -FeatureName SMB1Protocol -NoRestart
+
+# Enable PowerShell logging
+Set-ItemProperty -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\PowerShell\\ScriptBlockLogging" -Name "EnableScriptBlockLogging" -Value 1
+
+# Configure Windows Firewall
+Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled True
+
+# Enable audit logging
+auditpol /set /category:"Account Logon" /success:enable /failure:enable'''
             })
 
         # Output the improvements
