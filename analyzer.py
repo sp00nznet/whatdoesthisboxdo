@@ -40,6 +40,7 @@ from connectors.proxmox_connector import ProxmoxConnector
 from generators.doc_generator import DocumentationGenerator
 from generators.terraform_generator import TerraformGenerator
 from generators.ansible_generator import AnsibleGenerator
+from generators.ansible_full_generator import AnsibleFullGenerator
 from generators.packer_generator import PackerGenerator
 from generators.aws_generator import AWSGenerator
 from generators.gcp_generator import GCPGenerator
@@ -583,6 +584,12 @@ class SystemAnalyzer:
         generator = AnsibleGenerator(self.analysis_data)
         return generator.generate(output_path or f"{self.config['output_dir']}/ansible")
 
+    def generate_ansible_full(self, output_path: str = None) -> str:
+        """Generate comprehensive Ansible playbooks for full system recreation"""
+        logger.info("Generating comprehensive Ansible playbooks for full system recreation...")
+        generator = AnsibleFullGenerator(self.analysis_data)
+        return generator.generate(output_path or f"{self.config['output_dir']}/ansible-full")
+
     def generate_packer(self, output_path: str = None) -> str:
         """Generate Packer templates"""
         logger.info("Generating Packer templates...")
@@ -666,7 +673,7 @@ class SystemAnalyzer:
         logger.info(f"Cost report saved to {path}")
         return path
 
-    def generate_all(self, include_cloud: bool = True) -> dict:
+    def generate_all(self, include_cloud: bool = True, full_ansible: bool = True) -> dict:
         """Generate all outputs"""
         outputs = {
             'documentation': self.generate_documentation(),
@@ -674,6 +681,10 @@ class SystemAnalyzer:
             'ansible': self.generate_ansible(),
             'packer': self.generate_packer()
         }
+
+        # Generate full ansible playbooks for complete system recreation
+        if full_ansible:
+            outputs['ansible_full'] = self.generate_ansible_full()
 
         if include_cloud:
             outputs['terraform_aws'] = self.generate_aws()
@@ -791,6 +802,16 @@ Examples:
         help='Only generate cost estimates'
     )
     parser.add_argument(
+        '--ansible-full-only',
+        action='store_true',
+        help='Only generate comprehensive Ansible playbooks for full system recreation'
+    )
+    parser.add_argument(
+        '--no-ansible-full',
+        action='store_true',
+        help='Skip comprehensive Ansible playbook generation'
+    )
+    parser.add_argument(
         '-m', '--monitor',
         type=int,
         default=0,
@@ -869,9 +890,24 @@ Examples:
             print("\nGenerated cloud outputs:")
             for name, path in outputs.items():
                 print(f"  - {name}: {path}")
+        elif args.ansible_full_only:
+            # Only generate comprehensive Ansible playbooks
+            path = analyzer.generate_ansible_full()
+            print(f"\nComprehensive Ansible playbooks generated: {path}")
+            print("This includes playbooks for full system recreation including:")
+            print("  - Users and groups with passwords")
+            print("  - All installed packages")
+            print("  - System mounts and filesystem")
+            print("  - Docker containers and configuration")
+            print("  - Cron jobs and scheduled tasks")
+            print("  - Network and firewall configuration")
+            print("  - System configuration files")
         else:
-            # Generate all (with or without cloud)
-            outputs = analyzer.generate_all(include_cloud=not args.no_cloud)
+            # Generate all (with or without cloud, with or without full ansible)
+            outputs = analyzer.generate_all(
+                include_cloud=not args.no_cloud,
+                full_ansible=not args.no_ansible_full
+            )
             print("\nGenerated outputs:")
             for name, path in outputs.items():
                 print(f"  - {name}: {path}")
