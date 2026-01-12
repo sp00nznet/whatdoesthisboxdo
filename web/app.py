@@ -488,8 +488,8 @@ def admin_add_credential():
         os_type = request.form.get('os_type', 'linux')
         description = request.form.get('description', '').strip()
 
-        if not name or not hostname or not username:
-            flash('Name, hostname, and username are required', 'error')
+        if not name or not username:
+            flash('Name and username are required', 'error')
         elif not password and not ssh_key:
             flash('Either password or SSH key path is required', 'error')
         else:
@@ -525,8 +525,8 @@ def admin_edit_credential(cred_id):
         if not ssh_key and credential.get('ssh_key'):
             ssh_key = credential['ssh_key']
 
-        if not name or not hostname or not username:
-            flash('Name, hostname, and username are required', 'error')
+        if not name or not username:
+            flash('Name and username are required', 'error')
         else:
             save_credential(name, hostname, username, password, ssh_key, port, os_type, description)
             flash(f'Credential "{name}" updated successfully', 'success')
