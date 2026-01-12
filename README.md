@@ -159,6 +159,121 @@ Results include:
 - **Warnings** for potential issues
 - **Recommendations** for optimization
 
+## Web Interface
+
+Run the web interface for a user-friendly way to analyze servers and download outputs.
+
+### Quick Start with Docker
+
+```bash
+# Start the web interface
+docker-compose up -d
+
+# Access at http://localhost:5000
+```
+
+### Web Interface Features
+
+- **Single Server Analysis** - Enter connection details or use saved credentials
+- **Batch Processing** - Upload CSV files to analyze multiple servers
+- **Metrics Monitoring** - Configure real-time metrics collection duration
+- **Generation Options** - Choose which outputs to generate:
+  - Basic Ansible playbooks
+  - Full Ansible system recreation playbooks
+  - vSphere Terraform configuration
+  - Cloud provider configs (AWS, GCP, Azure)
+- **Downloadable Outputs** - Download all generated files as ZIP:
+  - Individual Terraform configs per provider
+  - Combined Terraform package
+  - Ansible playbooks
+  - Complete output bundle
+- **Job Management** - Track analysis progress and view results
+- **Credential Management** - Save and reuse SSH/WinRM credentials
+- **Admin Dashboard** - Manage credentials and environment variables
+
+### Running Locally
+
+```bash
+# Install dependencies
+pip3 install flask
+
+# Set environment variables
+export FLASK_SECRET_KEY="your-secret-key"
+export API_KEY="your-api-key"  # Required for REST API
+
+# Run the web server
+cd web
+python3 app.py
+```
+
+---
+
+## REST API
+
+The web interface includes a REST API for programmatic access. All endpoints require an API key.
+
+### Quick Examples
+
+```bash
+# Start an analysis with metrics monitoring
+curl -X POST http://localhost:5000/api/v1/analyze \
+  -H "X-API-Key: YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "hostname": "server.example.com",
+    "username": "ubuntu",
+    "ssh_key": "...",
+    "monitor_duration": 60,
+    "generate_ansible_full": true,
+    "generate_cloud": true
+  }'
+
+# Check job status
+curl http://localhost:5000/api/v1/jobs/<job_id> \
+  -H "X-API-Key: YOUR_KEY"
+
+# Download Ansible playbooks
+curl http://localhost:5000/api/v1/jobs/<job_id>/outputs/ansible-full \
+  -H "X-API-Key: YOUR_KEY" \
+  -o ansible-full.zip
+
+# Download all Terraform configs
+curl http://localhost:5000/api/v1/jobs/<job_id>/outputs/all-terraform \
+  -H "X-API-Key: YOUR_KEY" \
+  -o terraform.zip
+```
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/analyze` | POST | Start single server analysis |
+| `/api/v1/batch` | POST | Start batch analysis |
+| `/api/v1/jobs` | GET | List all jobs |
+| `/api/v1/jobs/<id>` | GET | Get job status and details |
+| `/api/v1/jobs/<id>/result` | GET | Get analysis result data |
+| `/api/v1/jobs/<id>/outputs` | GET | List available outputs |
+| `/api/v1/jobs/<id>/outputs/<type>` | GET | Download output as ZIP |
+| `/api/v1/outputs` | GET | List all output directories |
+| `/api/v1/outputs/<dir>/<type>` | GET | Download output as ZIP |
+| `/api/v1/docs` | GET | List documentation files |
+| `/api/v1/docs/<filename>` | GET | Download documentation |
+| `/api/v1/credentials` | GET/POST | List/create credentials |
+
+### Analysis Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `monitor_duration` | int | 0 | Metrics collection duration in seconds |
+| `generate_ansible` | bool | true | Generate basic Ansible playbooks |
+| `generate_ansible_full` | bool | true | Generate full recreation playbooks |
+| `generate_terraform` | bool | true | Generate vSphere Terraform |
+| `generate_cloud` | bool | true | Generate AWS/GCP/Azure configs |
+
+See [API Reference](docs/api-reference.md) for complete documentation.
+
+---
+
 ## Batch Processing (CSV)
 
 Analyze multiple servers at once using a CSV file.
@@ -516,6 +631,7 @@ Key packages:
 
 | Document | Description |
 |----------|-------------|
+| [API Reference](docs/api-reference.md) | REST API v1 complete documentation |
 | [Ansible Full Recreation](docs/ansible-full-recreation.md) | Complete system recreation guide |
 | [Configuration Guide](docs/configuration.md) | Config options |
 | [Output Reference](docs/output-reference.md) | Generated files |
