@@ -1,43 +1,88 @@
 version: '3.8'
 
 services:
-  whatdoesthisboxdo:
+  # ==========================================================================
+  # Web Application
+  # ==========================================================================
+  web:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: whatdoesthisboxdo
+    container_name: whatdoesthisboxdo-web
     ports:
       - "5000:5000"
     environment:
-      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
+      # Application settings
+      - SECRET_KEY=${SECRET_KEY:-change-me-in-production-use-random-string}
       - DEBUG=${DEBUG:-false}
       - PORT=5000
+      # Database connection (PostgreSQL)
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-whatdoesthisboxdo}:${POSTGRES_PASSWORD:-whatdoesthisboxdo}@db:5432/${POSTGRES_DB:-whatdoesthisboxdo}
+      # Encryption key for credentials (IMPORTANT: set this in production!)
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-change-me-use-random-32-byte-key}
     volumes:
       # Persist generated documentation
-      - ./output:/app/web/output
+      - docs_output:/app/web/output
+      # Persist uploaded files
+      - docs_uploads:/app/web/uploads
       # Mount SSH keys if needed (read-only)
       - ${SSH_KEY_PATH:-~/.ssh}:/root/.ssh:ro
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 30s
+    networks:
+      - whatdoesthisboxdo-net
+
+  # ==========================================================================
+  # PostgreSQL Database
+  # ==========================================================================
+  db:
+    image: postgres:15-alpine
+    container_name: whatdoesthisboxdo-db
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-whatdoesthisboxdo}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-whatdoesthisboxdo}
+      - POSTGRES_DB=${POSTGRES_DB:-whatdoesthisboxdo}
+    volumes:
+      # Persist database data
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-whatdoesthisboxdo}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
       start_period: 10s
+    networks:
+      - whatdoesthisboxdo-net
 
-  # Optional: Redis for job queue (for production scaling)
-  # redis:
-  #   image: redis:7-alpine
-  #   container_name: whatdoesthisboxdo-redis
-  #   volumes:
-  #     - redis_data:/data
-  #   restart: unless-stopped
-
+# =============================================================================
+# Persistent Volumes
+# =============================================================================
 volumes:
-  output:
-  # redis_data:
+  # PostgreSQL database storage
+  postgres_data:
+    name: whatdoesthisboxdo-postgres-data
 
-# Network configuration (optional)
+  # Generated documentation output
+  docs_output:
+    name: whatdoesthisboxdo-docs-output
+
+  # Uploaded files
+  docs_uploads:
+    name: whatdoesthisboxdo-docs-uploads
+
+# =============================================================================
+# Network Configuration
+# =============================================================================
 networks:
-  default:
+  whatdoesthisboxdo-net:
     name: whatdoesthisboxdo-network
+    driver: bridge

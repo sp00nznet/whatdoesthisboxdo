@@ -66,3 +66,7 @@ web/uploads/*
 web/output/*
 !web/output/.gitkeep
 web/data/
+
+# Environment files (contain secrets)
+.env
+!.env.example
