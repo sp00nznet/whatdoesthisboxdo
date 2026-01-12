@@ -16,9 +16,15 @@
   <img src="https://img.shields.io/badge/vSphere-VM-607078.svg" alt="vSphere">
 </p>
 
+<p align="center">
+  <img src="https://img.shields.io/badge/Linux-SSH-FCC624.svg" alt="Linux">
+  <img src="https://img.shields.io/badge/Windows-WinRM-0078D6.svg" alt="Windows">
+  <img src="https://img.shields.io/badge/Local-Analysis-00C853.svg" alt="Local">
+</p>
+
 ---
 
-A remote system analysis tool that connects to servers via SSH, analyzes them, estimates cloud costs, and generates Infrastructure-as-Code to recreate them.
+A system analysis tool that connects to Linux servers via SSH, Windows servers via WinRM, or analyzes the local system. It estimates cloud costs and generates Infrastructure-as-Code to recreate them.
 
 ## Quick Start
 
@@ -27,8 +33,14 @@ A remote system analysis tool that connects to servers via SSH, analyzes them, e
 ./setup.sh
 source venv/bin/activate
 
-# Analyze a remote server (with SSH key)
+# Analyze the local system
+python3 analyzer.py --local
+
+# Analyze a remote Linux server (with SSH key)
 python3 analyzer.py -H server.example.com -u ubuntu -k ~/.ssh/id_rsa
+
+# Analyze a remote Windows server (WinRM)
+python3 analyzer.py --windows -H winserver.example.com -u Administrator --password
 
 # Analyze with password authentication
 python3 analyzer.py -H server.example.com -u admin --password
@@ -40,26 +52,52 @@ python3 batch_processor.py servers.csv -k ~/.ssh/id_rsa
 ## How It Works
 
 ```
-┌──────────────┐         ┌──────────────┐         ┌──────────────┐
-│  YOUR        │   SSH   │    REMOTE    │         │    OUTPUT    │
-│  WORKSTATION │ ──────▶ │    SERVER    │ ──────▶ │    FILES     │
-└──────────────┘         └──────────────┘         └──────────────┘
+                         ┌──────────────────┐
+                         │   TARGET SYSTEM  │
+                         ├──────────────────┤
+┌──────────────┐   SSH   │  Linux Server    │         ┌──────────────┐
+│              │ ──────▶ │                  │         │              │
+│    YOUR      │         ├──────────────────┤         │    OUTPUT    │
+│  WORKSTATION │  WinRM  │  Windows Server  │ ──────▶ │    FILES     │
+│              │ ──────▶ │                  │         │              │
+│              │         ├──────────────────┤         └──────────────┘
+│              │  Local  │  This Machine    │
+│              │ ──────▶ │                  │
+└──────────────┘         └──────────────────┘
                               │
                               │ Analyzes:
                               │ • Processes & services
                               │ • Packages & configs
-                              │ • Bash history
+                              │ • Bash/PowerShell history
                               │ • Network connections
+                              │ • SSH keys & certificates
                               ▼
          ┌───────────────────────────────────────────────────────┐
          │                   GENERATES                           │
          ├───────────┬───────────┬───────────┬───────────┬──────┤
          │    AWS    │    GCP    │   Azure   │  vSphere  │ Cost │
          │ Terraform │ Terraform │ Terraform │    IaC    │ Est. │
-         └───────────┴───────────┴───────────┴───────────┴──────┘
+         ├───────────┴───────────┴───────────┴───────────┴──────┤
+         │   Scaling Ideas │ Containerization │ Config Tips     │
+         └───────────────────────────────────────────────────────┘
 ```
 
-## Single Server Analysis
+## Local Analysis
+
+Analyze the current system without any remote connection:
+
+```bash
+# Analyze this machine
+python3 analyzer.py --local
+
+# With metrics monitoring
+python3 analyzer.py --local -m 60
+
+# Output to specific directory
+python3 analyzer.py --local -o ./my-analysis
+```
+
+## Linux Server Analysis (SSH)
 
 ```bash
 # Basic remote analysis (with SSH key)
@@ -85,6 +123,37 @@ python3 analyzer.py -H server.example.com -u root -k ~/.ssh/id_rsa -p 2222
 
 # Output to specific directory
 python3 analyzer.py -H server.example.com -u ubuntu -k ~/.ssh/id_rsa -o ./results
+```
+
+## Windows Server Analysis (WinRM)
+
+Analyze Windows servers remotely using WinRM:
+
+```bash
+# Basic Windows analysis
+python3 analyzer.py --windows -H winserver.example.com -u Administrator --password
+
+# With HTTPS (port 5986)
+python3 analyzer.py --windows -H winserver.example.com -u Administrator --password --winrm-ssl
+
+# Custom WinRM port
+python3 analyzer.py --windows -H winserver.example.com -u Administrator --password -p 5986
+
+# Using domain credentials
+python3 analyzer.py --windows -H winserver.example.com -u 'DOMAIN\Administrator' --password
+```
+
+### WinRM Requirements
+
+The target Windows server must have WinRM enabled:
+
+```powershell
+# On the Windows target (run as Administrator)
+Enable-PSRemoting -Force
+winrm quickconfig
+
+# Allow connections from your IP
+Set-Item WSMan:\localhost\Client\TrustedHosts -Value "your-workstation-ip"
 ```
 
 ## Metrics Monitoring
@@ -185,7 +254,7 @@ output/
 
 | Output | Description |
 |--------|-------------|
-| `documentation.md` | Server purpose, health assessment, security analysis, troubleshooting |
+| `documentation.md` | Server purpose, health assessment, security analysis, recommendations |
 | `cost-estimate.md` | Annual cost comparison: AWS vs GCP vs Azure |
 | `terraform-aws/` | AWS EC2 configuration |
 | `terraform-gcp/` | GCP Compute Engine configuration |
@@ -203,23 +272,32 @@ output/
 - **Security Checklist** - Firewall, exposed ports, fail2ban, etc.
 - **Resource Metrics** - CPU, memory, disk, network with assessments
 - **Service Opinions** - Analysis of running services with recommendations
+- **Scaling Recommendations** - Horizontal vs vertical scaling strategies
+- **Containerization Suggestions** - Docker Compose structures, migration steps
+- **Configuration Improvements** - Service-specific tuning recommendations
 
 ## Command Reference
 
 ### analyzer.py
 
 ```
-usage: analyzer.py [-h] [-H HOST] [-u USER] [-p PORT] [-k KEY] [--sudo-pass]
-                   [--password] [-m SECONDS] [-c CONFIG] [-o OUTPUT]
+usage: analyzer.py [-h] [--local] [--windows] [-H HOST] [-u USER] [-p PORT]
+                   [-k KEY] [--sudo-pass] [--password] [--winrm-ssl]
+                   [-m SECONDS] [-c CONFIG] [-o OUTPUT]
                    [--analyze-only] [--no-cloud] [--cloud-only] [--cost-only] [-v]
+
+Analysis Mode:
+  --local              Analyze the local system (no remote connection)
+  --windows            Target is a Windows server (use WinRM instead of SSH)
 
 Remote Connection:
   -H, --host HOST      Remote hostname or IP to analyze
-  -u, --user USER      SSH username (default: root)
-  -p, --port PORT      SSH port (default: 22)
+  -u, --user USER      SSH/WinRM username (default: root)
+  -p, --port PORT      SSH port (default: 22) or WinRM port (default: 5985)
   -k, --key KEY        Path to SSH private key
-  --sudo-pass          Prompt for sudo password
-  --password           Prompt for SSH password (instead of key)
+  --sudo-pass          Prompt for sudo password (Linux only)
+  --password           Prompt for SSH/WinRM password
+  --winrm-ssl          Use HTTPS for WinRM connection (port 5986)
 
 Monitoring:
   -m, --monitor SECS   Collect metrics over specified duration (e.g., -m 60)
@@ -274,8 +352,9 @@ If credentials are not provided, the analysis will note which sources were unava
 ## Requirements
 
 - Python 3.8+
-- SSH access to target servers (key or password)
-- Sudo access on target servers (for full analysis)
+- For Linux analysis: SSH access to target servers (key or password)
+- For Windows analysis: WinRM enabled on target servers
+- Sudo/Admin access on target servers (for full analysis)
 
 ### System Prerequisites (Debian/Ubuntu)
 
@@ -294,12 +373,16 @@ sudo apt install python3.13-venv
 python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip3 install -r requirements.txt
+
+# For Windows server analysis (optional)
+pip3 install pywinrm
 ```
 
 Key packages:
-- `paramiko` - SSH connectivity
+- `paramiko` - SSH connectivity for Linux servers
+- `pywinrm` - WinRM connectivity for Windows servers (optional)
 - `psutil` - System analysis (optional, for local analysis)
-- `requests` - API calls for cost estimation
+- `requests` - API calls for cost estimation and external sources
 
 ## Documentation
 
