@@ -10,11 +10,12 @@ import csv
 import json
 import uuid
 import threading
+import functools
 from datetime import datetime
 from io import StringIO
 from pathlib import Path
 
-from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify
+from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify, session
 
 # Add parent directory to path to import analyzer modules
 PARENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -35,6 +36,17 @@ try:
 except ImportError:
     WINRM_AVAILABLE = False
     WinRMConfig = None
+
+# Import database module
+from database import (
+    init_db, admin_exists, create_admin_user, verify_admin_user, update_admin_login,
+    change_admin_password, save_credential, get_credential, list_credentials,
+    delete_credential, save_env_variable, get_env_variable, list_env_variables,
+    delete_env_variable, load_env_variables_to_environ
+)
+
+# Load stored environment variables
+load_env_variables_to_environ()
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'whatdoesthisboxdo-dev-key')
@@ -128,20 +140,38 @@ def index():
 def analyze():
     """Single server analysis page."""
     if request.method == 'POST':
-        hostname = request.form.get('hostname', '').strip()
-        username = request.form.get('username', '').strip()
-        password = request.form.get('password', '')
-        ssh_key = request.form.get('ssh_key', '').strip()
-        port = int(request.form.get('port', 22))
-        os_type = request.form.get('os_type', 'linux')
+        # Check if using saved credential
+        saved_credential_id = request.form.get('saved_credential', '').strip()
 
-        if not hostname or not username:
-            flash('Hostname and username are required', 'error')
-            return render_template('analyze.html')
+        if saved_credential_id:
+            # Use saved credential
+            cred = get_credential(credential_id=int(saved_credential_id))
+            if not cred:
+                flash('Selected credential not found', 'error')
+                return render_template('analyze.html')
 
-        if not password and not ssh_key:
-            flash('Either password or SSH key is required', 'error')
-            return render_template('analyze.html')
+            hostname = cred['hostname']
+            username = cred['username']
+            password = cred.get('password', '')
+            ssh_key = cred.get('ssh_key', '')
+            port = cred['port']
+            os_type = cred['os_type']
+        else:
+            # Manual entry
+            hostname = request.form.get('hostname', '').strip()
+            username = request.form.get('username', '').strip()
+            password = request.form.get('password', '')
+            ssh_key = request.form.get('ssh_key', '').strip()
+            port = int(request.form.get('port', 22))
+            os_type = request.form.get('os_type', 'linux')
+
+            if not hostname or not username:
+                flash('Hostname and username are required', 'error')
+                return render_template('analyze.html')
+
+            if not password and not ssh_key:
+                flash('Either password or SSH key is required', 'error')
+                return render_template('analyze.html')
 
         # Create job
         job_id = str(uuid.uuid4())
@@ -347,6 +377,290 @@ def api_docs_list():
 
     docs.sort(key=lambda x: x['modified'], reverse=True)
     return jsonify(docs)
+
+
+# =============================================================================
+# Admin Routes
+# =============================================================================
+
+def admin_required(f):
+    """Decorator to require admin login."""
+    @functools.wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get('admin_logged_in'):
+            flash('Please log in to access the admin area', 'error')
+            return redirect(url_for('admin_login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+@app.route('/admin/login', methods=['GET', 'POST'])
+def admin_login():
+    """Admin login page."""
+    # If no admin exists, redirect to setup
+    if not admin_exists():
+        return redirect(url_for('admin_setup'))
+
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+
+        if verify_admin_user(username, password):
+            session['admin_logged_in'] = True
+            session['admin_username'] = username
+            update_admin_login(username)
+            flash('Logged in successfully', 'success')
+            return redirect(url_for('admin_dashboard'))
+        else:
+            flash('Invalid username or password', 'error')
+
+    return render_template('admin/login.html')
+
+
+@app.route('/admin/setup', methods=['GET', 'POST'])
+def admin_setup():
+    """Initial admin setup - create first admin user."""
+    if admin_exists():
+        return redirect(url_for('admin_login'))
+
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        confirm = request.form.get('confirm_password', '')
+
+        if not username or not password:
+            flash('Username and password are required', 'error')
+        elif password != confirm:
+            flash('Passwords do not match', 'error')
+        elif len(password) < 8:
+            flash('Password must be at least 8 characters', 'error')
+        else:
+            if create_admin_user(username, password):
+                flash('Admin account created. Please log in.', 'success')
+                return redirect(url_for('admin_login'))
+            else:
+                flash('Failed to create admin account', 'error')
+
+    return render_template('admin/setup.html')
+
+
+@app.route('/admin/logout')
+def admin_logout():
+    """Admin logout."""
+    session.pop('admin_logged_in', None)
+    session.pop('admin_username', None)
+    flash('Logged out successfully', 'success')
+    return redirect(url_for('index'))
+
+
+@app.route('/admin')
+@admin_required
+def admin_dashboard():
+    """Admin dashboard."""
+    credentials = list_credentials()
+    env_vars = list_env_variables()
+    return render_template('admin/dashboard.html',
+                          credentials=credentials,
+                          env_vars=env_vars)
+
+
+# Credential Management Routes
+
+@app.route('/admin/credentials')
+@admin_required
+def admin_credentials():
+    """List all credentials."""
+    credentials = list_credentials()
+    return render_template('admin/credentials.html', credentials=credentials)
+
+
+@app.route('/admin/credentials/add', methods=['GET', 'POST'])
+@admin_required
+def admin_add_credential():
+    """Add a new credential."""
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        hostname = request.form.get('hostname', '').strip()
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        ssh_key = request.form.get('ssh_key', '').strip()
+        port = int(request.form.get('port', 22))
+        os_type = request.form.get('os_type', 'linux')
+        description = request.form.get('description', '').strip()
+
+        if not name or not hostname or not username:
+            flash('Name, hostname, and username are required', 'error')
+        elif not password and not ssh_key:
+            flash('Either password or SSH key path is required', 'error')
+        else:
+            save_credential(name, hostname, username, password, ssh_key, port, os_type, description)
+            flash(f'Credential "{name}" saved successfully', 'success')
+            return redirect(url_for('admin_credentials'))
+
+    return render_template('admin/credential_form.html', credential=None)
+
+
+@app.route('/admin/credentials/<int:cred_id>/edit', methods=['GET', 'POST'])
+@admin_required
+def admin_edit_credential(cred_id):
+    """Edit a credential."""
+    credential = get_credential(credential_id=cred_id)
+    if not credential:
+        flash('Credential not found', 'error')
+        return redirect(url_for('admin_credentials'))
+
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        hostname = request.form.get('hostname', '').strip()
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        ssh_key = request.form.get('ssh_key', '').strip()
+        port = int(request.form.get('port', 22))
+        os_type = request.form.get('os_type', 'linux')
+        description = request.form.get('description', '').strip()
+
+        # Keep existing password/key if not provided
+        if not password and credential.get('password'):
+            password = credential['password']
+        if not ssh_key and credential.get('ssh_key'):
+            ssh_key = credential['ssh_key']
+
+        if not name or not hostname or not username:
+            flash('Name, hostname, and username are required', 'error')
+        else:
+            save_credential(name, hostname, username, password, ssh_key, port, os_type, description)
+            flash(f'Credential "{name}" updated successfully', 'success')
+            return redirect(url_for('admin_credentials'))
+
+    return render_template('admin/credential_form.html', credential=credential)
+
+
+@app.route('/admin/credentials/<int:cred_id>/delete', methods=['POST'])
+@admin_required
+def admin_delete_credential(cred_id):
+    """Delete a credential."""
+    if delete_credential(cred_id):
+        flash('Credential deleted successfully', 'success')
+    else:
+        flash('Failed to delete credential', 'error')
+    return redirect(url_for('admin_credentials'))
+
+
+# Environment Variable Routes
+
+@app.route('/admin/env')
+@admin_required
+def admin_env_vars():
+    """List all environment variables."""
+    env_vars = list_env_variables()
+    return render_template('admin/env_vars.html', env_vars=env_vars)
+
+
+@app.route('/admin/env/add', methods=['GET', 'POST'])
+@admin_required
+def admin_add_env_var():
+    """Add a new environment variable."""
+    if request.method == 'POST':
+        key = request.form.get('key', '').strip().upper()
+        value = request.form.get('value', '')
+        description = request.form.get('description', '').strip()
+
+        if not key or not value:
+            flash('Key and value are required', 'error')
+        else:
+            save_env_variable(key, value, description)
+            # Also set in current environment
+            os.environ[key] = value
+            flash(f'Environment variable "{key}" saved successfully', 'success')
+            return redirect(url_for('admin_env_vars'))
+
+    return render_template('admin/env_form.html', env_var=None)
+
+
+@app.route('/admin/env/<key>/edit', methods=['GET', 'POST'])
+@admin_required
+def admin_edit_env_var(key):
+    """Edit an environment variable."""
+    env_vars = list_env_variables(include_values=True)
+    env_var = next((v for v in env_vars if v['key'] == key), None)
+
+    if not env_var:
+        flash('Environment variable not found', 'error')
+        return redirect(url_for('admin_env_vars'))
+
+    if request.method == 'POST':
+        new_key = request.form.get('key', '').strip().upper()
+        value = request.form.get('value', '')
+        description = request.form.get('description', '').strip()
+
+        if not new_key or not value:
+            flash('Key and value are required', 'error')
+        else:
+            # If key changed, delete old one
+            if new_key != key:
+                delete_env_variable(key)
+                if key in os.environ:
+                    del os.environ[key]
+
+            save_env_variable(new_key, value, description)
+            os.environ[new_key] = value
+            flash(f'Environment variable "{new_key}" updated successfully', 'success')
+            return redirect(url_for('admin_env_vars'))
+
+    return render_template('admin/env_form.html', env_var=env_var)
+
+
+@app.route('/admin/env/<key>/delete', methods=['POST'])
+@admin_required
+def admin_delete_env_var(key):
+    """Delete an environment variable."""
+    if delete_env_variable(key):
+        if key in os.environ:
+            del os.environ[key]
+        flash('Environment variable deleted successfully', 'success')
+    else:
+        flash('Failed to delete environment variable', 'error')
+    return redirect(url_for('admin_env_vars'))
+
+
+@app.route('/admin/password', methods=['GET', 'POST'])
+@admin_required
+def admin_change_password():
+    """Change admin password."""
+    if request.method == 'POST':
+        current = request.form.get('current_password', '')
+        new_password = request.form.get('new_password', '')
+        confirm = request.form.get('confirm_password', '')
+
+        username = session.get('admin_username')
+
+        if not verify_admin_user(username, current):
+            flash('Current password is incorrect', 'error')
+        elif new_password != confirm:
+            flash('New passwords do not match', 'error')
+        elif len(new_password) < 8:
+            flash('Password must be at least 8 characters', 'error')
+        else:
+            if change_admin_password(username, new_password):
+                flash('Password changed successfully', 'success')
+                return redirect(url_for('admin_dashboard'))
+            else:
+                flash('Failed to change password', 'error')
+
+    return render_template('admin/change_password.html')
+
+
+# API endpoint to get credentials for analyze form
+@app.route('/api/credentials')
+def api_list_credentials():
+    """API endpoint to list credentials (without secrets) for dropdown."""
+    credentials = list_credentials(include_secrets=False)
+    return jsonify([{
+        'id': c['id'],
+        'name': c['name'],
+        'hostname': c['hostname'],
+        'os_type': c['os_type']
+    } for c in credentials])
 
 
 if __name__ == '__main__':

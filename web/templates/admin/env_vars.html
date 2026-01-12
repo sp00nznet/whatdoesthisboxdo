@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block title %}Environment Variables - WhatDoesThisBoxDo{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Environment Variables</h1>
+    <div class="page-actions">
+        <a href="{{ url_for('admin_add_env_var') }}" class="btn btn-primary">Add Variable</a>
+        <a href="{{ url_for('admin_dashboard') }}" class="btn btn-secondary">Back to Dashboard</a>
+    </div>
+</div>
+
+<div class="info-box" style="margin-bottom: 1.5rem;">
+    <p><strong>Note:</strong> Environment variables are loaded when the application starts. Changes take effect immediately for new variables, but some may require a restart to apply to all features.</p>
+</div>
+
+{% if env_vars %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Key</th>
+            <th>Value</th>
+            <th>Description</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for var in env_vars %}
+        <tr>
+            <td><code>{{ var.key }}</code></td>
+            <td><code>{{ var.value }}</code></td>
+            <td>{{ var.description or '-' }}</td>
+            <td class="actions">
+                <a href="{{ url_for('admin_edit_env_var', key=var.key) }}" class="btn btn-sm btn-secondary">Edit</a>
+                <form method="POST" action="{{ url_for('admin_delete_env_var', key=var.key) }}" style="display: inline;" onsubmit="return confirm('Delete {{ var.key }}?');">
+                    <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="empty-state">
+    <p>No environment variables configured yet.</p>
+    <a href="{{ url_for('admin_add_env_var') }}" class="btn btn-primary">Add Your First Variable</a>
+</div>
+{% endif %}
+
+<div class="info-box" style="margin-top: 2rem;">
+    <h4>Common Variables</h4>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Variable</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr><td><code>SECRET_KEY</code></td><td>Flask secret key for sessions</td></tr>
+            <tr><td><code>GITLAB_URL</code></td><td>GitLab server URL</td></tr>
+            <tr><td><code>GITLAB_TOKEN</code></td><td>GitLab API token</td></tr>
+            <tr><td><code>HARBOR_URL</code></td><td>Harbor registry URL</td></tr>
+            <tr><td><code>HARBOR_USERNAME</code></td><td>Harbor username</td></tr>
+            <tr><td><code>HARBOR_PASSWORD</code></td><td>Harbor password</td></tr>
+            <tr><td><code>VCENTER_HOST</code></td><td>vCenter server hostname</td></tr>
+            <tr><td><code>VCENTER_USER</code></td><td>vCenter username</td></tr>
+            <tr><td><code>VCENTER_PASSWORD</code></td><td>vCenter password</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<style>
+.empty-state {
+    text-align: center;
+    padding: 3rem;
+    background: #f8fafc;
+    border-radius: 8px;
+}
+.actions { white-space: nowrap; }
+</style>
+{% endblock %}

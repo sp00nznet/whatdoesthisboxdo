@@ -15,6 +15,9 @@ ENV PORT=5000
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-client \
     sshpass \
+    curl \
+    libpq-dev \
+    gcc \
     && rm -rf /var/lib/apt/lists/*
 
 # Create app directory
@@ -25,13 +28,16 @@ COPY requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir flask gunicorn
+    && pip install --no-cache-dir flask gunicorn psycopg2-binary cryptography
+
+# Remove build dependencies to reduce image size
+RUN apt-get purge -y --auto-remove gcc
 
 # Copy application code
 COPY . .
 
 # Create directories for web app
-RUN mkdir -p /app/web/uploads /app/web/output
+RUN mkdir -p /app/web/uploads /app/web/output /app/web/data
 
 # Set permissions
 RUN chmod -R 755 /app
