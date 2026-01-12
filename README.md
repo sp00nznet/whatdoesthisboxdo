@@ -190,7 +190,91 @@ output/
 | `terraform-aws/` | AWS EC2 configuration |
 | `terraform-gcp/` | GCP Compute Engine configuration |
 | `terraform-azure/` | Azure VM configuration |
-| `ansible/` | Playbooks to configure new servers |
+| `ansible/` | Basic playbooks to configure new servers |
+| `ansible-full/` | **Comprehensive playbooks for full system recreation** |
+
+## Full System Recreation with Ansible
+
+The tool generates comprehensive Ansible playbooks (`ansible-full/`) that can recreate a system exactly as it was, including:
+
+| Component | What Gets Recreated |
+|-----------|---------------------|
+| **Users & Groups** | All user accounts, group memberships, passwords (hashed), shell configs, SSH keys |
+| **Packages** | System packages (apt/yum), pip packages, npm globals, snaps |
+| **Services** | Systemd services, custom unit files, enabled/running states |
+| **Docker** | Docker installation, containers, images, networks, volumes, compose files |
+| **Filesystem** | Mount points (fstab), NFS/CIFS mounts, directory structures |
+| **Cron Jobs** | User crontabs, /etc/cron.d files, scheduled tasks |
+| **Network** | Hostname, /etc/hosts, firewall rules (UFW), netplan configs |
+| **Configuration** | SSH config, sudoers, sysctl, system limits, environment variables |
+
+### Generate Full Ansible Playbooks Only
+
+```bash
+# Generate only comprehensive Ansible playbooks
+python3 analyzer.py -H server.example.com -u ubuntu -k ~/.ssh/id_rsa --ansible-full-only
+
+# Skip full ansible generation (use basic only)
+python3 analyzer.py -H server.example.com -u ubuntu -k ~/.ssh/id_rsa --no-ansible-full
+```
+
+### Using the Generated Ansible Playbooks
+
+```bash
+cd output/server.example.com/ansible-full/
+
+# Review and customize variables
+vim group_vars/all.yml
+
+# Check syntax
+./check-syntax.sh
+
+# Dry run (no changes)
+./dryrun.sh <target_host>
+
+# Deploy full system
+./deploy.sh <target_host>
+```
+
+### Run Specific Roles
+
+```bash
+# Only recreate users
+ansible-playbook -i inventory site.yml --tags "users"
+
+# Only install packages
+ansible-playbook -i inventory site.yml --tags "packages"
+
+# Only configure Docker
+ansible-playbook -i inventory site.yml --tags "docker"
+
+# Only filesystem (directories + mounts)
+ansible-playbook -i inventory site.yml --tags "filesystem"
+```
+
+## System State Collection Script
+
+For manual data collection or offline analysis, use the included bash script:
+
+```bash
+# Run on the source server
+./scripts/collect_system_state.sh [output_dir]
+
+# Example
+sudo ./scripts/collect_system_state.sh /tmp/system_state
+```
+
+This collects:
+- User accounts and password hashes
+- Group memberships
+- All installed packages (apt, pip, npm, snap)
+- Running services and custom unit files
+- Cron jobs
+- Docker containers, images, networks, volumes
+- Mount points and fstab
+- Directory structures (/opt, /srv, /var/www, etc.)
+- Network configuration and firewall rules
+- System configuration files
 
 ### Documentation Includes
 
@@ -211,26 +295,29 @@ output/
 ```
 usage: analyzer.py [-h] [-H HOST] [-u USER] [-p PORT] [-k KEY] [--sudo-pass]
                    [--password] [-m SECONDS] [-c CONFIG] [-o OUTPUT]
-                   [--analyze-only] [--no-cloud] [--cloud-only] [--cost-only] [-v]
+                   [--analyze-only] [--no-cloud] [--cloud-only] [--cost-only]
+                   [--ansible-full-only] [--no-ansible-full] [-v]
 
 Remote Connection:
-  -H, --host HOST      Remote hostname or IP to analyze
-  -u, --user USER      SSH username (default: root)
-  -p, --port PORT      SSH port (default: 22)
-  -k, --key KEY        Path to SSH private key
-  --sudo-pass          Prompt for sudo password
-  --password           Prompt for SSH password (instead of key)
+  -H, --host HOST         Remote hostname or IP to analyze
+  -u, --user USER         SSH username (default: root)
+  -p, --port PORT         SSH port (default: 22)
+  -k, --key KEY           Path to SSH private key
+  --sudo-pass             Prompt for sudo password
+  --password              Prompt for SSH password (instead of key)
 
 Monitoring:
-  -m, --monitor SECS   Collect metrics over specified duration (e.g., -m 60)
+  -m, --monitor SECS      Collect metrics over specified duration (e.g., -m 60)
 
 Options:
-  -o, --output DIR     Output directory (default: output)
-  --analyze-only       Only run analysis, skip generation
-  --no-cloud           Skip AWS/GCP/Azure generation
-  --cloud-only         Only generate cloud configs
-  --cost-only          Only generate cost estimates
-  -v, --verbose        Enable debug logging
+  -o, --output DIR        Output directory (default: output)
+  --analyze-only          Only run analysis, skip generation
+  --no-cloud              Skip AWS/GCP/Azure generation
+  --cloud-only            Only generate cloud configs
+  --cost-only             Only generate cost estimates
+  --ansible-full-only     Only generate comprehensive Ansible playbooks
+  --no-ansible-full       Skip comprehensive Ansible generation
+  -v, --verbose           Enable debug logging
 ```
 
 ### batch_processor.py
@@ -305,6 +392,7 @@ Key packages:
 
 | Document | Description |
 |----------|-------------|
+| [Ansible Full Recreation](docs/ansible-full-recreation.md) | Complete system recreation guide |
 | [Configuration Guide](docs/configuration.md) | Config options |
 | [Output Reference](docs/output-reference.md) | Generated files |
 | [Cloud Providers](docs/cloud-providers.md) | AWS, GCP, Azure guides |
