@@ -140,38 +140,46 @@ def index():
 def analyze():
     """Single server analysis page."""
     if request.method == 'POST':
+        # Get connection details from form (these can be overridden even with saved credential)
+        hostname = request.form.get('hostname', '').strip()
+        port = int(request.form.get('port', 22))
+        os_type = request.form.get('os_type', 'linux')
+
         # Check if using saved credential
         saved_credential_id = request.form.get('saved_credential', '').strip()
 
         if saved_credential_id:
-            # Use saved credential
+            # Use saved credential for authentication
             cred = get_credential(credential_id=int(saved_credential_id))
             if not cred:
                 flash('Selected credential not found', 'error')
                 return render_template('analyze.html')
 
-            hostname = cred['hostname']
             username = cred['username']
             password = cred.get('password', '')
             ssh_key = cred.get('ssh_key', '')
-            port = cred['port']
-            os_type = cred['os_type']
+
+            # Use credential defaults for hostname/port/os_type only if not provided in form
+            if not hostname and cred.get('hostname'):
+                hostname = cred['hostname']
         else:
             # Manual entry
-            hostname = request.form.get('hostname', '').strip()
             username = request.form.get('username', '').strip()
             password = request.form.get('password', '')
             ssh_key = request.form.get('ssh_key', '').strip()
-            port = int(request.form.get('port', 22))
-            os_type = request.form.get('os_type', 'linux')
-
-            if not hostname or not username:
-                flash('Hostname and username are required', 'error')
-                return render_template('analyze.html')
 
             if not password and not ssh_key:
                 flash('Either password or SSH key is required', 'error')
                 return render_template('analyze.html')
+
+        # Validate required fields
+        if not hostname:
+            flash('Hostname is required', 'error')
+            return render_template('analyze.html')
+
+        if not username:
+            flash('Username is required', 'error')
+            return render_template('analyze.html')
 
         # Create job
         job_id = str(uuid.uuid4())
