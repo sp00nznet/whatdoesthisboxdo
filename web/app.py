@@ -21,6 +21,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from analyzer import SystemAnalyzer
 from generators.doc_generator import DocumentationGenerator
+from connectors.ssh_connector import SSHConnector
+from connectors.winrm_connector import WinRMConnector
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'whatdoesthisboxdo-dev-key')
@@ -60,10 +62,8 @@ def analyze_server(job_id, hostname, username, password=None, ssh_key=None, port
         jobs[job_id]['message'] = 'Analyzing system...'
 
         if os_type == 'windows':
-            from connectors.winrm_connector import WinRMConnector
             connector = WinRMConnector(hostname, username, password, port=port)
         else:
-            from connectors.ssh_connector import SSHConnector
             connector = SSHConnector(hostname, username, password=password, key_file=ssh_key, port=port)
 
         data = analyzer.analyze(connector)
