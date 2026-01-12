@@ -17,7 +17,12 @@ from pathlib import Path
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify
 
 # Add parent directory to path to import analyzer modules
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+PARENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PARENT_DIR not in sys.path:
+    sys.path.insert(0, PARENT_DIR)
+
+# Change working directory to project root for relative imports
+os.chdir(PARENT_DIR)
 
 from analyzer import SystemAnalyzer
 from generators.doc_generator import DocumentationGenerator
