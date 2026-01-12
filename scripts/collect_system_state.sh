@@ -15,12 +15,12 @@ echo "Output directory: $OUTPUT_DIR"
 echo ""
 
 # Create output directory structure
-mkdir -p "$OUTPUT_DIR"/{users,groups,packages,services,cron,docker,mounts,directories,network,configs}
+mkdir -p "$OUTPUT_DIR"/{users,groups,packages,services,cron,docker,mounts,directories,network,configs,secrets}
 
 #######################################
 # USER ACCOUNTS COLLECTION
 #######################################
-echo "[1/12] Collecting user accounts..."
+echo "[1/13] Collecting user accounts..."
 
 # Get all user accounts with details (excluding system accounts with uid < 1000, except root)
 cat /etc/passwd | awk -F: '($3 >= 1000 || $1 == "root") {print}' > "$OUTPUT_DIR/users/passwd_entries.txt" 2>/dev/null || true
@@ -53,6 +53,21 @@ for user_home in /home/* /root; do
         if [ -f "$user_home/.ssh/authorized_keys" ]; then
             mkdir -p "$user_dir/.ssh"
             cp "$user_home/.ssh/authorized_keys" "$user_dir/.ssh/" 2>/dev/null || true
+        fi
+
+        # Get GPG keyring
+        if [ -d "$user_home/.gnupg" ]; then
+            mkdir -p "$user_dir/.gnupg"
+            # Copy the entire GPG directory (contains keyrings, trustdb, etc.)
+            cp -r "$user_home/.gnupg"/* "$user_dir/.gnupg/" 2>/dev/null || true
+            chmod -R 600 "$user_dir/.gnupg" 2>/dev/null || true
+            # Also export public keys in ASCII format for easier review
+            if command -v gpg &> /dev/null; then
+                GNUPGHOME="$user_home/.gnupg" gpg --export --armor > "$user_dir/.gnupg/public_keys.asc" 2>/dev/null || true
+                # List keys for reference
+                GNUPGHOME="$user_home/.gnupg" gpg --list-keys --keyid-format SHORT > "$user_dir/.gnupg/key_list.txt" 2>/dev/null || true
+                GNUPGHOME="$user_home/.gnupg" gpg --list-secret-keys --keyid-format SHORT > "$user_dir/.gnupg/secret_key_list.txt" 2>/dev/null || true
+            fi
         fi
 
         # Get crontab for user
@@ -93,7 +108,7 @@ echo "]" >> "$OUTPUT_DIR/users/users.json"
 #######################################
 # GROUPS COLLECTION
 #######################################
-echo "[2/12] Collecting groups..."
+echo "[2/13] Collecting groups..."
 
 # Get all groups with members
 cat /etc/group > "$OUTPUT_DIR/groups/group_entries.txt" 2>/dev/null || true
@@ -122,7 +137,7 @@ echo "]" >> "$OUTPUT_DIR/groups/groups.json"
 #######################################
 # INSTALLED PACKAGES
 #######################################
-echo "[3/12] Collecting installed packages..."
+echo "[3/13] Collecting installed packages..."
 
 # Debian/Ubuntu packages
 if command -v dpkg-query &> /dev/null; then
@@ -155,7 +170,7 @@ gem list --local 2>/dev/null > "$OUTPUT_DIR/packages/gem_packages.txt" || true
 #######################################
 # SYSTEM SERVICES
 #######################################
-echo "[4/12] Collecting services..."
+echo "[4/13] Collecting services..."
 
 # Systemd services (enabled and running)
 systemctl list-units --type=service --all --no-pager --no-legend > "$OUTPUT_DIR/services/all_services.txt" 2>/dev/null || true
@@ -179,7 +194,7 @@ systemctl list-timers --all --no-pager > "$OUTPUT_DIR/services/timers.txt" 2>/de
 #######################################
 # CRON JOBS
 #######################################
-echo "[5/12] Collecting cron jobs..."
+echo "[5/13] Collecting cron jobs..."
 
 # System crontabs
 for crondir in /etc/cron.d /etc/cron.daily /etc/cron.hourly /etc/cron.weekly /etc/cron.monthly; do
@@ -198,7 +213,7 @@ cp /etc/anacrontab "$OUTPUT_DIR/cron/anacrontab" 2>/dev/null || true
 #######################################
 # DOCKER CONTAINERS
 #######################################
-echo "[6/12] Collecting Docker information..."
+echo "[6/13] Collecting Docker information..."
 
 if command -v docker &> /dev/null; then
     # List all containers with full details
@@ -245,7 +260,7 @@ fi
 #######################################
 # SYSTEM MOUNTS
 #######################################
-echo "[7/12] Collecting mount information..."
+echo "[7/13] Collecting mount information..."
 
 # Current mounts
 mount > "$OUTPUT_DIR/mounts/current_mounts.txt" 2>/dev/null || true
@@ -273,7 +288,7 @@ df -h > "$OUTPUT_DIR/mounts/disk_usage.txt" 2>/dev/null || true
 #######################################
 # DIRECTORY STRUCTURE
 #######################################
-echo "[8/12] Collecting important directory structures..."
+echo "[8/13] Collecting important directory structures..."
 
 # Important directories to capture
 IMPORTANT_DIRS="/opt /srv /var/www /var/lib /etc"
@@ -305,7 +320,7 @@ done
 #######################################
 # NETWORK CONFIGURATION
 #######################################
-echo "[9/12] Collecting network configuration..."
+echo "[9/13] Collecting network configuration..."
 
 # Hostname
 hostname > "$OUTPUT_DIR/network/hostname.txt" 2>/dev/null || true
@@ -345,7 +360,7 @@ ss -ulnp > "$OUTPUT_DIR/network/listening_udp.txt" 2>/dev/null || true
 #######################################
 # CONFIGURATION FILES
 #######################################
-echo "[10/12] Collecting configuration files..."
+echo "[10/13] Collecting configuration files..."
 
 # SSH configuration
 mkdir -p "$OUTPUT_DIR/configs/ssh"
@@ -389,7 +404,7 @@ done
 #######################################
 # SYSTEM INFORMATION
 #######################################
-echo "[11/12] Collecting system information..."
+echo "[11/13] Collecting system information..."
 
 mkdir -p "$OUTPUT_DIR/system"
 
@@ -413,10 +428,70 @@ uptime > "$OUTPUT_DIR/system/uptime.txt" 2>/dev/null || true
 #######################################
 # ENVIRONMENT VARIABLES
 #######################################
-echo "[12/12] Collecting environment variables..."
+echo "[12/13] Collecting environment variables..."
 
 # System-wide environment
 printenv > "$OUTPUT_DIR/system/environment.txt" 2>/dev/null || true
+
+#######################################
+# SSH KEYS AND GPG KEYRINGS
+#######################################
+echo "[13/13] Collecting SSH keys and GPG keyrings..."
+
+# SSH host keys (for server identity)
+mkdir -p "$OUTPUT_DIR/secrets/ssh_host_keys"
+cp /etc/ssh/ssh_host_*_key.pub "$OUTPUT_DIR/secrets/ssh_host_keys/" 2>/dev/null || true
+if [ "$(id -u)" -eq 0 ]; then
+    cp /etc/ssh/ssh_host_*_key "$OUTPUT_DIR/secrets/ssh_host_keys/" 2>/dev/null || true
+    chmod 600 "$OUTPUT_DIR/secrets/ssh_host_keys"/* 2>/dev/null || true
+fi
+
+# Collect all SSH private keys (requires root)
+mkdir -p "$OUTPUT_DIR/secrets/ssh_private_keys"
+if [ "$(id -u)" -eq 0 ]; then
+    for user_home in /home/* /root; do
+        if [ -d "$user_home/.ssh" ]; then
+            username=$(basename "$user_home")
+            mkdir -p "$OUTPUT_DIR/secrets/ssh_private_keys/$username"
+            # Copy private keys (id_rsa, id_ed25519, id_ecdsa, etc.)
+            for key_file in "$user_home/.ssh/id_"*; do
+                [ -f "$key_file" ] && cp "$key_file" "$OUTPUT_DIR/secrets/ssh_private_keys/$username/" 2>/dev/null || true
+            done
+            # Copy known_hosts for reference
+            [ -f "$user_home/.ssh/known_hosts" ] && cp "$user_home/.ssh/known_hosts" "$OUTPUT_DIR/secrets/ssh_private_keys/$username/" 2>/dev/null || true
+            # Copy SSH config
+            [ -f "$user_home/.ssh/config" ] && cp "$user_home/.ssh/config" "$OUTPUT_DIR/secrets/ssh_private_keys/$username/" 2>/dev/null || true
+        fi
+    done
+    chmod -R 600 "$OUTPUT_DIR/secrets/ssh_private_keys" 2>/dev/null || true
+fi
+
+# Collect GPG keyrings summary
+mkdir -p "$OUTPUT_DIR/secrets/gpg_keyrings"
+for user_home in /home/* /root; do
+    if [ -d "$user_home/.gnupg" ]; then
+        username=$(basename "$user_home")
+        mkdir -p "$OUTPUT_DIR/secrets/gpg_keyrings/$username"
+
+        # Export public keys
+        GNUPGHOME="$user_home/.gnupg" gpg --export --armor > "$OUTPUT_DIR/secrets/gpg_keyrings/$username/public_keys.asc" 2>/dev/null || true
+
+        # Export secret keys (requires the key passphrase to use, but exports the encrypted key)
+        if [ "$(id -u)" -eq 0 ]; then
+            GNUPGHOME="$user_home/.gnupg" gpg --export-secret-keys --armor > "$OUTPUT_DIR/secrets/gpg_keyrings/$username/secret_keys.asc" 2>/dev/null || true
+            chmod 600 "$OUTPUT_DIR/secrets/gpg_keyrings/$username/secret_keys.asc" 2>/dev/null || true
+        fi
+
+        # List keys
+        GNUPGHOME="$user_home/.gnupg" gpg --list-keys --keyid-format LONG > "$OUTPUT_DIR/secrets/gpg_keyrings/$username/public_key_list.txt" 2>/dev/null || true
+        GNUPGHOME="$user_home/.gnupg" gpg --list-secret-keys --keyid-format LONG > "$OUTPUT_DIR/secrets/gpg_keyrings/$username/secret_key_list.txt" 2>/dev/null || true
+
+        # Copy trust database and configuration
+        [ -f "$user_home/.gnupg/trustdb.gpg" ] && cp "$user_home/.gnupg/trustdb.gpg" "$OUTPUT_DIR/secrets/gpg_keyrings/$username/" 2>/dev/null || true
+        [ -f "$user_home/.gnupg/gpg.conf" ] && cp "$user_home/.gnupg/gpg.conf" "$OUTPUT_DIR/secrets/gpg_keyrings/$username/" 2>/dev/null || true
+        [ -f "$user_home/.gnupg/gpg-agent.conf" ] && cp "$user_home/.gnupg/gpg-agent.conf" "$OUTPUT_DIR/secrets/gpg_keyrings/$username/" 2>/dev/null || true
+    fi
+done
 
 # Create summary
 cat > "$OUTPUT_DIR/SUMMARY.txt" << EOF
@@ -427,11 +502,12 @@ Collection Date: $(date)
 Collected By: $(whoami)
 
 Contents:
-- users/          User accounts, home directories, SSH keys
+- users/          User accounts, home directories, SSH keys, GPG keyrings
 - groups/         System groups
 - packages/       Installed packages (apt, pip, npm, snap, etc.)
 - services/       Systemd services and custom unit files
 - cron/           Cron jobs and scheduled tasks
+- secrets/        SSH private keys, host keys, GPG keyrings (exported)
 - docker/         Docker containers, images, networks, volumes
 - mounts/         File systems and mount points
 - directories/    Important directory structures

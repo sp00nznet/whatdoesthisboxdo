@@ -41,6 +41,7 @@ class AnsibleFullGenerator:
             'roles/cron/tasks', 'roles/cron/defaults', 'roles/cron/files',
             'roles/network/tasks', 'roles/network/handlers', 'roles/network/defaults', 'roles/network/files', 'roles/network/templates',
             'roles/configs/tasks', 'roles/configs/handlers', 'roles/configs/defaults', 'roles/configs/files', 'roles/configs/templates',
+            'roles/secrets/tasks', 'roles/secrets/handlers', 'roles/secrets/defaults', 'roles/secrets/files/gpg', 'roles/secrets/files/ssh',
             'group_vars', 'host_vars', 'files', 'templates'
         ]
 
@@ -67,6 +68,7 @@ class AnsibleFullGenerator:
         self._generate_cron_role(ansible_dir)
         self._generate_network_role(ansible_dir)
         self._generate_configs_role(ansible_dir)
+        self._generate_secrets_role(ansible_dir)
 
         # Generate helper scripts
         self._generate_helper_scripts(ansible_dir)
@@ -170,7 +172,8 @@ context = 3
                     {'role': 'services', 'tags': ['services']},
                     {'role': 'docker', 'tags': ['docker', 'containers']},
                     {'role': 'cron', 'tags': ['cron', 'scheduled']},
-                    {'role': 'configs', 'tags': ['configs', 'configuration']}
+                    {'role': 'configs', 'tags': ['configs', 'configuration']},
+                    {'role': 'secrets', 'tags': ['secrets', 'gpg', 'ssh-keys']}
                 ],
                 'post_tasks': [
                     {
@@ -196,7 +199,8 @@ context = 3
             'network.yml': ['network', 'firewall'],
             'filesystem.yml': ['directories', 'mounts'],
             'cron.yml': ['cron'],
-            'configs.yml': ['configs']
+            'configs.yml': ['configs'],
+            'secrets.yml': ['secrets']
         }
 
         for filename, roles in role_playbooks.items():
@@ -1631,6 +1635,295 @@ Subsystem sftp /usr/lib/openssh/sftp-server
 '''
         with open(os.path.join(role_dir, 'templates', 'sshd_config.j2'), 'w') as f:
             f.write(sshd_template)
+
+    def _generate_secrets_role(self, output_dir: str) -> None:
+        """Generate SSH keys and GPG keyrings restoration role"""
+        role_dir = os.path.join(output_dir, 'roles', 'secrets')
+
+        tasks = [
+            {
+                'name': 'Install GnuPG',
+                'apt': {
+                    'name': ['gnupg', 'gnupg-agent'],
+                    'state': 'present'
+                },
+                'when': "ansible_os_family == 'Debian' and gpg_keyrings is defined"
+            },
+            {
+                'name': 'Ensure .gnupg directory exists for users',
+                'file': {
+                    'path': '{{ item.home | default("/home/" + item.user) }}/.gnupg',
+                    'state': 'directory',
+                    'owner': '{{ item.user }}',
+                    'group': '{{ item.user }}',
+                    'mode': '0700'
+                },
+                'loop': '{{ gpg_keyrings }}',
+                'when': 'gpg_keyrings is defined and gpg_keyrings | length > 0'
+            },
+            {
+                'name': 'Copy GPG public keys',
+                'copy': {
+                    'src': 'gpg/{{ item.user }}/public_keys.asc',
+                    'dest': '{{ item.home | default("/home/" + item.user) }}/.gnupg/public_keys.asc',
+                    'owner': '{{ item.user }}',
+                    'group': '{{ item.user }}',
+                    'mode': '0600'
+                },
+                'loop': '{{ gpg_keyrings }}',
+                'when': 'gpg_keyrings is defined',
+                'ignore_errors': True
+            },
+            {
+                'name': 'Import GPG public keys',
+                'command': 'gpg --import {{ item.home | default("/home/" + item.user) }}/.gnupg/public_keys.asc',
+                'become_user': '{{ item.user }}',
+                'loop': '{{ gpg_keyrings }}',
+                'when': 'gpg_keyrings is defined',
+                'ignore_errors': True
+            },
+            {
+                'name': 'Copy GPG secret keys (encrypted)',
+                'copy': {
+                    'src': 'gpg/{{ item.user }}/secret_keys.asc',
+                    'dest': '{{ item.home | default("/home/" + item.user) }}/.gnupg/secret_keys.asc',
+                    'owner': '{{ item.user }}',
+                    'group': '{{ item.user }}',
+                    'mode': '0600'
+                },
+                'loop': '{{ gpg_keyrings }}',
+                'when': 'gpg_keyrings is defined and import_gpg_secret_keys | default(false)',
+                'ignore_errors': True
+            },
+            {
+                'name': 'Import GPG secret keys',
+                'command': 'gpg --import {{ item.home | default("/home/" + item.user) }}/.gnupg/secret_keys.asc',
+                'become_user': '{{ item.user }}',
+                'loop': '{{ gpg_keyrings }}',
+                'when': 'gpg_keyrings is defined and import_gpg_secret_keys | default(false)',
+                'ignore_errors': True
+            },
+            {
+                'name': 'Copy GPG configuration',
+                'copy': {
+                    'src': 'gpg/{{ item.user }}/gpg.conf',
+                    'dest': '{{ item.home | default("/home/" + item.user) }}/.gnupg/gpg.conf',
+                    'owner': '{{ item.user }}',
+                    'group': '{{ item.user }}',
+                    'mode': '0600'
+                },
+                'loop': '{{ gpg_keyrings }}',
+                'when': 'gpg_keyrings is defined',
+                'ignore_errors': True
+            },
+            {
+                'name': 'Copy GPG agent configuration',
+                'copy': {
+                    'src': 'gpg/{{ item.user }}/gpg-agent.conf',
+                    'dest': '{{ item.home | default("/home/" + item.user) }}/.gnupg/gpg-agent.conf',
+                    'owner': '{{ item.user }}',
+                    'group': '{{ item.user }}',
+                    'mode': '0600'
+                },
+                'loop': '{{ gpg_keyrings }}',
+                'when': 'gpg_keyrings is defined',
+                'ignore_errors': True
+            },
+            {
+                'name': 'Ensure .ssh directory exists for users',
+                'file': {
+                    'path': '{{ item.home | default("/home/" + item.user) }}/.ssh',
+                    'state': 'directory',
+                    'owner': '{{ item.user }}',
+                    'group': '{{ item.user }}',
+                    'mode': '0700'
+                },
+                'loop': '{{ ssh_private_keys }}',
+                'when': 'ssh_private_keys is defined and ssh_private_keys | length > 0'
+            },
+            {
+                'name': 'Copy SSH private keys',
+                'copy': {
+                    'src': 'ssh/{{ item.user }}/{{ item.key_file }}',
+                    'dest': '{{ item.home | default("/home/" + item.user) }}/.ssh/{{ item.key_file }}',
+                    'owner': '{{ item.user }}',
+                    'group': '{{ item.user }}',
+                    'mode': '0600'
+                },
+                'loop': '{{ ssh_private_keys }}',
+                'when': 'ssh_private_keys is defined and copy_ssh_private_keys | default(false)',
+                'ignore_errors': True
+            },
+            {
+                'name': 'Copy SSH public keys',
+                'copy': {
+                    'src': 'ssh/{{ item.user }}/{{ item.key_file }}.pub',
+                    'dest': '{{ item.home | default("/home/" + item.user) }}/.ssh/{{ item.key_file }}.pub',
+                    'owner': '{{ item.user }}',
+                    'group': '{{ item.user }}',
+                    'mode': '0644'
+                },
+                'loop': '{{ ssh_private_keys }}',
+                'when': 'ssh_private_keys is defined',
+                'ignore_errors': True
+            },
+            {
+                'name': 'Copy SSH config',
+                'copy': {
+                    'src': 'ssh/{{ item.user }}/config',
+                    'dest': '{{ item.home | default("/home/" + item.user) }}/.ssh/config',
+                    'owner': '{{ item.user }}',
+                    'group': '{{ item.user }}',
+                    'mode': '0600'
+                },
+                'loop': '{{ ssh_private_keys }}',
+                'when': 'ssh_private_keys is defined',
+                'ignore_errors': True
+            },
+            {
+                'name': 'Copy known_hosts',
+                'copy': {
+                    'src': 'ssh/{{ item.user }}/known_hosts',
+                    'dest': '{{ item.home | default("/home/" + item.user) }}/.ssh/known_hosts',
+                    'owner': '{{ item.user }}',
+                    'group': '{{ item.user }}',
+                    'mode': '0644'
+                },
+                'loop': '{{ ssh_private_keys }}',
+                'when': 'ssh_private_keys is defined',
+                'ignore_errors': True
+            },
+            {
+                'name': 'Restore SSH host keys',
+                'copy': {
+                    'src': 'ssh/host_keys/',
+                    'dest': '/etc/ssh/',
+                    'mode': 'preserve'
+                },
+                'notify': 'restart sshd',
+                'when': 'restore_ssh_host_keys | default(false)',
+                'ignore_errors': True
+            }
+        ]
+
+        with open(os.path.join(role_dir, 'tasks', 'main.yml'), 'w') as f:
+            f.write('---\n# SSH keys and GPG keyrings restoration tasks\n\n')
+            yaml.dump(tasks, f, default_flow_style=False, sort_keys=False)
+
+        handlers = [
+            {
+                'name': 'restart sshd',
+                'systemd': {
+                    'name': 'sshd',
+                    'state': 'restarted'
+                }
+            }
+        ]
+
+        with open(os.path.join(role_dir, 'handlers', 'main.yml'), 'w') as f:
+            yaml.dump(handlers, f, default_flow_style=False, sort_keys=False)
+
+        defaults = {
+            'gpg_keyrings': [
+                # Example: {'user': 'john', 'home': '/home/john'}
+            ],
+            'ssh_private_keys': [
+                # Example: {'user': 'john', 'key_file': 'id_ed25519', 'home': '/home/john'}
+            ],
+            'import_gpg_secret_keys': False,
+            'copy_ssh_private_keys': False,
+            'restore_ssh_host_keys': False
+        }
+
+        with open(os.path.join(role_dir, 'defaults', 'main.yml'), 'w') as f:
+            f.write('---\n# SSH and GPG secrets defaults\n')
+            f.write('# WARNING: Handle these files securely!\n')
+            f.write('# Place GPG exports in roles/secrets/files/gpg/<username>/\n')
+            f.write('# Place SSH keys in roles/secrets/files/ssh/<username>/\n\n')
+            yaml.dump(defaults, f, default_flow_style=False, sort_keys=False)
+
+        # Create README for secrets role
+        readme = '''# Secrets Role
+
+This role restores SSH keys and GPG keyrings for users.
+
+## WARNING
+
+This role handles sensitive cryptographic material. Ensure:
+1. Files are encrypted at rest (use Ansible Vault)
+2. Access is restricted to authorized personnel
+3. Keys are rotated regularly
+4. Backup copies are stored securely
+
+## Directory Structure
+
+```
+roles/secrets/files/
+├── gpg/
+│   └── <username>/
+│       ├── public_keys.asc      # Exported public keys
+│       ├── secret_keys.asc      # Exported secret keys (encrypted)
+│       ├── gpg.conf             # GPG configuration
+│       └── gpg-agent.conf       # GPG agent configuration
+└── ssh/
+    ├── <username>/
+    │   ├── id_ed25519           # Private key
+    │   ├── id_ed25519.pub       # Public key
+    │   ├── config               # SSH config
+    │   └── known_hosts          # Known hosts
+    └── host_keys/
+        ├── ssh_host_rsa_key
+        ├── ssh_host_rsa_key.pub
+        ├── ssh_host_ed25519_key
+        └── ssh_host_ed25519_key.pub
+```
+
+## Variables
+
+```yaml
+# GPG keyrings to restore
+gpg_keyrings:
+  - user: john
+    home: /home/john  # optional, defaults to /home/<user>
+
+# SSH keys to restore
+ssh_private_keys:
+  - user: john
+    key_file: id_ed25519
+    home: /home/john  # optional
+
+# Security flags (default: false for safety)
+import_gpg_secret_keys: false    # Import GPG secret keys
+copy_ssh_private_keys: false     # Copy SSH private keys
+restore_ssh_host_keys: false     # Restore SSH host keys
+```
+
+## Usage
+
+1. Export keys from source system using `collect_system_state.sh`
+2. Copy exported keys to `roles/secrets/files/`
+3. Configure variables in `group_vars/all.yml`
+4. Run with explicit flags:
+
+```bash
+ansible-playbook -i inventory site.yml --tags secrets \\
+  -e "import_gpg_secret_keys=true" \\
+  -e "copy_ssh_private_keys=true"
+```
+
+## Encrypting with Ansible Vault
+
+```bash
+# Encrypt the entire secrets files directory
+ansible-vault encrypt roles/secrets/files/gpg/*/secret_keys.asc
+ansible-vault encrypt roles/secrets/files/ssh/*/id_*
+
+# Run playbook with vault password
+ansible-playbook -i inventory site.yml --ask-vault-pass
+```
+'''
+        with open(os.path.join(role_dir, 'README.md'), 'w') as f:
+            f.write(readme)
 
     def _generate_helper_scripts(self, output_dir: str) -> None:
         """Generate helper scripts for running Ansible"""
