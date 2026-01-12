@@ -1,6 +1,6 @@
 # What Does This Box Do?
 
-> SSH into any server. Understand its purpose. Recreate it anywhere.
+> Analyze any server - local, remote Linux (SSH), or Windows (WinRM). Understand its purpose. Recreate it anywhere.
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.8+-blue.svg" alt="Python 3.8+">
@@ -18,7 +18,7 @@
 
 ---
 
-A remote system analysis tool that connects to servers via SSH, analyzes them, estimates cloud costs, and generates Infrastructure-as-Code to recreate them.
+A system analysis tool that connects to local or remote servers (Linux via SSH, Windows via WinRM), analyzes them, estimates cloud costs, and generates Infrastructure-as-Code to recreate them.
 
 ## Quick Start
 
@@ -27,8 +27,14 @@ A remote system analysis tool that connects to servers via SSH, analyzes them, e
 ./setup.sh
 source venv/bin/activate
 
-# Analyze a remote server (with SSH key)
+# Analyze the local system
+python3 analyzer.py --local
+
+# Analyze a remote Linux server (with SSH key)
 python3 analyzer.py -H server.example.com -u ubuntu -k ~/.ssh/id_rsa
+
+# Analyze a remote Windows server (WinRM)
+python3 analyzer.py --windows -H winserver.example.com -u Administrator --password
 
 # Analyze with password authentication
 python3 analyzer.py -H server.example.com -u admin --password
@@ -85,6 +91,47 @@ python3 analyzer.py -H server.example.com -u root -k ~/.ssh/id_rsa -p 2222
 
 # Output to specific directory
 python3 analyzer.py -H server.example.com -u ubuntu -k ~/.ssh/id_rsa -o ./results
+```
+
+## Local Analysis
+
+Analyze the current system without any remote connection:
+
+```bash
+# Analyze local system
+python3 analyzer.py --local
+
+# Local analysis with metrics monitoring
+python3 analyzer.py --local -m 60
+
+# Local analysis to specific output directory
+python3 analyzer.py --local -o ./my-server-analysis
+```
+
+## Windows Server Analysis
+
+Analyze Windows servers using WinRM (Windows Remote Management):
+
+```bash
+# Basic Windows analysis
+python3 analyzer.py --windows -H winserver.example.com -u Administrator --password
+
+# Windows with HTTPS (port 5986)
+python3 analyzer.py --windows -H winserver.example.com -u Administrator --password --winrm-ssl
+
+# Custom WinRM port
+python3 analyzer.py --windows -H winserver.example.com -u Administrator --password -p 5985
+```
+
+**Windows Prerequisites:**
+- WinRM must be enabled on the target server
+- Install pywinrm: `pip3 install pywinrm`
+
+Enable WinRM on Windows (run as Administrator):
+```powershell
+winrm quickconfig
+winrm set winrm/config/service '@{AllowUnencrypted="true"}'
+winrm set winrm/config/service/auth '@{Basic="true"}'
 ```
 
 ## Metrics Monitoring
@@ -301,18 +348,25 @@ This collects:
 ### analyzer.py
 
 ```
-usage: analyzer.py [-h] [-H HOST] [-u USER] [-p PORT] [-k KEY] [--sudo-pass]
-                   [--password] [-m SECONDS] [-c CONFIG] [-o OUTPUT]
-                   [--analyze-only] [--no-cloud] [--cloud-only] [--cost-only]
-                   [--ansible-full-only] [--no-ansible-full] [-v]
+usage: analyzer.py [-h] [--local] [--windows] [-H HOST] [-u USER] [-p PORT]
+                   [-k KEY] [--sudo-pass] [--password] [--winrm-ssl]
+                   [-m SECONDS] [-c CONFIG] [-o OUTPUT] [--analyze-only]
+                   [--generate-only] [--analysis-file FILE] [--no-cloud]
+                   [--cloud-only] [--cost-only] [--ansible-full-only]
+                   [--no-ansible-full] [-v]
+
+Analysis Mode:
+  --local                 Analyze the local system (no remote connection)
+  --windows               Target is a Windows server (use WinRM instead of SSH)
 
 Remote Connection:
   -H, --host HOST         Remote hostname or IP to analyze
-  -u, --user USER         SSH username (default: root)
-  -p, --port PORT         SSH port (default: 22)
+  -u, --user USER         SSH/WinRM username (default: root)
+  -p, --port PORT         SSH port (default: 22) or WinRM port (default: 5985)
   -k, --key KEY           Path to SSH private key
-  --sudo-pass             Prompt for sudo password
-  --password              Prompt for SSH password (instead of key)
+  --sudo-pass             Prompt for sudo password (Linux only)
+  --password              Prompt for SSH/WinRM password
+  --winrm-ssl             Use HTTPS for WinRM connection (port 5986)
 
 Monitoring:
   -m, --monitor SECS      Collect metrics over specified duration (e.g., -m 60)
@@ -320,6 +374,8 @@ Monitoring:
 Options:
   -o, --output DIR        Output directory (default: output)
   --analyze-only          Only run analysis, skip generation
+  --generate-only         Skip analysis, only generate from existing data
+  --analysis-file FILE    Path to existing analysis JSON (for --generate-only)
   --no-cloud              Skip AWS/GCP/Azure generation
   --cloud-only            Only generate cloud configs
   --cost-only             Only generate cost estimates

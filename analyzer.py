@@ -33,6 +33,16 @@ from analyzers.history_analyzer import HistoryAnalyzer
 from analyzers.remote_analyzer import RemoteSystemAnalyzer
 from analyzers.metrics_monitor import MetricsMonitor
 from connectors.ssh_executor import SSHExecutor, SSHConfig
+from connectors.local_executor import LocalExecutor, LocalConfig
+
+# Optional Windows support
+try:
+    from connectors.winrm_executor import WinRMExecutor, WinRMConfig
+    from analyzers.windows_analyzer import WindowsSystemAnalyzer
+    WINDOWS_SUPPORT = True
+except ImportError:
+    WINDOWS_SUPPORT = False
+
 from connectors.gitlab_connector import GitLabConnector
 from connectors.harbor_connector import HarborConnector
 from connectors.vcenter_connector import VCenterConnector
@@ -57,11 +67,17 @@ logger = logging.getLogger(__name__)
 class SystemAnalyzer:
     """Main system analyzer class that orchestrates all analysis and generation"""
 
-    def __init__(self, config_path: str = None, remote_config: SSHConfig = None, monitor_duration: int = 0):
+    def __init__(self, config_path: str = None, remote_config: SSHConfig = None,
+                 winrm_config=None, local_mode: bool = False, monitor_duration: int = 0):
         self.config = self._load_config(config_path)
         self.remote_config = remote_config
+        self.winrm_config = winrm_config
+        self.local_mode = local_mode
         self.ssh: SSHExecutor = None
-        self.is_remote = remote_config is not None
+        self.winrm = None
+        self.local_executor = None
+        self.is_remote = remote_config is not None or winrm_config is not None
+        self.is_windows = winrm_config is not None
         self.monitor_duration = monitor_duration  # Duration in seconds for metrics collection
         self.analysis_data = {
             'timestamp': datetime.now().isoformat(),
@@ -545,23 +561,122 @@ class SystemAnalyzer:
         finally:
             self.disconnect_remote()
 
+    def run_windows_analysis(self) -> dict:
+        """Run analysis on a remote Windows server via WinRM"""
+        if not WINDOWS_SUPPORT:
+            raise RuntimeError(
+                "Windows support requires pywinrm.\n"
+                "Install with: pip3 install pywinrm"
+            )
+
+        if not self.winrm_config:
+            raise RuntimeError("WinRM configuration not provided")
+
+        self.winrm = WinRMExecutor(self.winrm_config)
+        if not self.winrm.connect():
+            raise RuntimeError(f"Failed to connect to {self.winrm_config.hostname}")
+
+        logger.info(f"Starting Windows analysis of {self.winrm.get_hostname()}...")
+
+        try:
+            analyzer = WindowsSystemAnalyzer(self.winrm)
+            remote_data = analyzer.analyze_all()
+
+            self.analysis_data.update(remote_data)
+            self.analysis_data['timestamp'] = datetime.now().isoformat()
+            self.analysis_data['os_type'] = 'windows'
+
+            # Run external source analysis
+            self.analyze_gitlab()
+            self.analyze_harbor()
+            self.analyze_virtualization()
+
+            # Generate summary
+            self.generate_summary()
+
+            logger.info("Windows analysis complete!")
+            return self.analysis_data
+
+        finally:
+            self.winrm.disconnect()
+
+    def run_local_analysis(self) -> dict:
+        """Run analysis on the local system (no SSH/WinRM needed)"""
+        import platform
+
+        self.local_executor = LocalExecutor(LocalConfig(use_sudo=True))
+        self.local_executor.connect()
+
+        is_windows = platform.system() == 'Windows'
+        self.analysis_data['hostname'] = self.local_executor.get_hostname()
+        self.analysis_data['os_info'] = self.local_executor.get_os_info()
+        self.analysis_data['os_type'] = 'windows' if is_windows else 'linux'
+
+        logger.info(f"Starting local analysis of {self.analysis_data['hostname']}...")
+
+        try:
+            if is_windows:
+                if not WINDOWS_SUPPORT:
+                    raise RuntimeError(
+                        "Windows local analysis requires the windows_analyzer module."
+                    )
+                # Use Windows analyzer with local executor
+                analyzer = WindowsSystemAnalyzer(self.local_executor)
+                remote_data = analyzer.analyze_all()
+            else:
+                # Use Linux analyzer with local executor
+                analyzer = RemoteSystemAnalyzer(self.local_executor)
+                remote_data = analyzer.analyze_all()
+
+            # Run metrics monitoring if duration is set
+            if self.monitor_duration > 0 and not is_windows:
+                logger.info(f"Starting metrics collection for {self.monitor_duration} seconds...")
+                monitor = MetricsMonitor(self.local_executor)
+
+                if self.monitor_duration <= 30:
+                    interval = 3
+                elif self.monitor_duration <= 120:
+                    interval = 5
+                else:
+                    interval = 10
+
+                monitor.monitor(self.monitor_duration, interval)
+                self.analysis_data['metrics_analysis'] = monitor.get_analysis()
+                self.analysis_data['monitoring_duration'] = self.monitor_duration
+                logger.info("Metrics collection complete!")
+
+            self.analysis_data.update(remote_data)
+            self.analysis_data['timestamp'] = datetime.now().isoformat()
+
+            # Run external source analysis
+            self.analyze_gitlab()
+            self.analyze_harbor()
+            self.analyze_virtualization()
+
+            # Generate summary
+            self.generate_summary()
+
+            logger.info("Local analysis complete!")
+            return self.analysis_data
+
+        finally:
+            self.local_executor.disconnect()
+
     def run_full_analysis(self) -> dict:
-        """Run complete system analysis (local or remote)"""
+        """Run complete system analysis (local, remote SSH, or remote WinRM)"""
+        if self.local_mode:
+            return self.run_local_analysis()
+
+        if self.winrm_config:
+            return self.run_windows_analysis()
+
         if self.is_remote:
             return self.run_remote_analysis()
 
-        logger.info("Starting full system analysis...")
-
-        self.analyze_processes()
-        self.analyze_files()
-        self.analyze_history()
-        self.analyze_gitlab()
-        self.analyze_harbor()
-        self.analyze_virtualization()
-        self.generate_summary()
-
-        logger.info("Analysis complete!")
-        return self.analysis_data
+        # Default to local analysis
+        logger.info("No remote config provided, running local analysis...")
+        self.local_mode = True
+        return self.run_local_analysis()
 
     def generate_documentation(self, output_path: str = None) -> str:
         """Generate documentation from analysis"""
@@ -712,8 +827,14 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Analyze a remote server (with SSH key)
+  # Analyze the local system
+  python3 analyzer.py --local
+
+  # Analyze a remote Linux server (with SSH key)
   python3 analyzer.py -H server.example.com -u ubuntu -k ~/.ssh/id_rsa
+
+  # Analyze a remote Windows server (WinRM)
+  python3 analyzer.py --windows -H winserver.example.com -u Administrator --password
 
   # Analyze with SSH password (no key)
   python3 analyzer.py -H server.example.com -u admin --password
@@ -729,6 +850,19 @@ Examples:
         """
     )
 
+    # Analysis mode options
+    mode_group = parser.add_argument_group('Analysis Mode')
+    mode_group.add_argument(
+        '--local',
+        action='store_true',
+        help='Analyze the local system (no remote connection)'
+    )
+    mode_group.add_argument(
+        '--windows',
+        action='store_true',
+        help='Target is a Windows server (use WinRM instead of SSH)'
+    )
+
     # Remote connection options
     remote_group = parser.add_argument_group('Remote Connection')
     remote_group.add_argument(
@@ -738,13 +872,13 @@ Examples:
     remote_group.add_argument(
         '-u', '--user',
         default='root',
-        help='SSH username (default: root)'
+        help='SSH/WinRM username (default: root)'
     )
     remote_group.add_argument(
         '-p', '--port',
         type=int,
-        default=22,
-        help='SSH port (default: 22)'
+        default=None,
+        help='SSH port (default: 22) or WinRM port (default: 5985)'
     )
     remote_group.add_argument(
         '-k', '--key',
@@ -753,12 +887,17 @@ Examples:
     remote_group.add_argument(
         '--sudo-pass',
         action='store_true',
-        help='Prompt for sudo password'
+        help='Prompt for sudo password (Linux only)'
     )
     remote_group.add_argument(
         '--password',
         action='store_true',
-        help='Prompt for SSH password (instead of key)'
+        help='Prompt for SSH/WinRM password'
+    )
+    remote_group.add_argument(
+        '--winrm-ssl',
+        action='store_true',
+        help='Use HTTPS for WinRM connection (port 5986)'
     )
 
     # General options
@@ -829,35 +968,70 @@ Examples:
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    # Build remote config if host is specified
+    # Build configuration based on mode
     remote_config = None
+    winrm_config = None
+    local_mode = args.local
+
     if args.host:
         import getpass
 
-        sudo_password = None
-        if args.sudo_pass:
-            sudo_password = getpass.getpass("Sudo password: ")
-
-        ssh_password = None
+        password = None
         if args.password:
-            ssh_password = getpass.getpass("SSH password: ")
+            password = getpass.getpass("Password: ")
 
-        remote_config = SSHConfig(
-            hostname=args.host,
-            username=args.user,
-            port=args.port,
-            private_key_path=args.key,
-            password=ssh_password,
-            sudo_password=sudo_password,
-            use_sudo=True
-        )
+        if args.windows:
+            # Windows remote analysis via WinRM
+            if not WINDOWS_SUPPORT:
+                print("Error: Windows support requires pywinrm.")
+                print("Install with: pip3 install pywinrm")
+                sys.exit(1)
 
-    analyzer = SystemAnalyzer(args.config, remote_config=remote_config, monitor_duration=args.monitor)
+            winrm_port = args.port or (5986 if args.winrm_ssl else 5985)
+            winrm_config = WinRMConfig(
+                hostname=args.host,
+                username=args.user,
+                password=password or '',
+                port=winrm_port,
+                use_ssl=args.winrm_ssl
+            )
+        else:
+            # Linux remote analysis via SSH
+            sudo_password = None
+            if args.sudo_pass:
+                sudo_password = getpass.getpass("Sudo password: ")
+
+            ssh_port = args.port or 22
+            remote_config = SSHConfig(
+                hostname=args.host,
+                username=args.user,
+                port=ssh_port,
+                private_key_path=args.key,
+                password=password,
+                sudo_password=sudo_password,
+                use_sudo=True
+            )
+    elif not args.local:
+        # No host specified and not explicitly local - prompt user
+        print("No host specified. Running local analysis...")
+        print("Use --local to suppress this message, or -H <host> for remote analysis.")
+        local_mode = True
+
+    analyzer = SystemAnalyzer(
+        args.config,
+        remote_config=remote_config,
+        winrm_config=winrm_config,
+        local_mode=local_mode,
+        monitor_duration=args.monitor
+    )
     analyzer.config['output_dir'] = args.output
 
-    # Adjust output directory for remote hosts
+    # Adjust output directory for remote hosts or local
     if args.host:
         analyzer.config['output_dir'] = os.path.join(args.output, args.host)
+    elif local_mode:
+        import socket
+        analyzer.config['output_dir'] = os.path.join(args.output, socket.gethostname())
 
     if args.generate_only:
         if args.analysis_file:
