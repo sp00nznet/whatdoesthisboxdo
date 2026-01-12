@@ -26,8 +26,15 @@ os.chdir(PARENT_DIR)
 
 from analyzer import SystemAnalyzer
 from generators.doc_generator import DocumentationGenerator
-from connectors.ssh_connector import SSHConnector
-from connectors.winrm_connector import WinRMConnector
+from connectors.ssh_executor import SSHConfig
+
+# Try to import WinRM support
+try:
+    from connectors.winrm_executor import WinRMConfig
+    WINRM_AVAILABLE = True
+except ImportError:
+    WINRM_AVAILABLE = False
+    WinRMConfig = None
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'whatdoesthisboxdo-dev-key')
@@ -48,31 +55,30 @@ def analyze_server(job_id, hostname, username, password=None, ssh_key=None, port
         jobs[job_id]['status'] = 'running'
         jobs[job_id]['message'] = f'Connecting to {hostname}...'
 
-        # Create analyzer
-        analyzer = SystemAnalyzer()
-
-        # Build credentials
-        credentials = {
-            'hostname': hostname,
-            'username': username,
-            'port': port,
-        }
-
-        if ssh_key:
-            credentials['ssh_key'] = ssh_key
-        elif password:
-            credentials['password'] = password
-
-        # Analyze the server
+        # Analyze the server based on OS type
         jobs[job_id]['message'] = 'Analyzing system...'
 
         if os_type == 'windows':
-            connector = WinRMConnector(hostname, username, password, port=port)
+            if not WINRM_AVAILABLE:
+                raise RuntimeError("Windows support requires pywinrm. Install with: pip3 install pywinrm")
+            winrm_config = WinRMConfig(
+                hostname=hostname,
+                username=username,
+                password=password,
+                port=port if port != 22 else 5985
+            )
+            analyzer = SystemAnalyzer(winrm_config=winrm_config)
+            data = analyzer.run_windows_analysis()
         else:
-            connector = SSHConnector(hostname, username, password=password, key_file=ssh_key, port=port)
-
-        data = analyzer.analyze(connector)
-        connector.close()
+            ssh_config = SSHConfig(
+                hostname=hostname,
+                username=username,
+                password=password,
+                key_file=ssh_key,
+                port=port
+            )
+            analyzer = SystemAnalyzer(remote_config=ssh_config)
+            data = analyzer.run_remote_analysis()
 
         # Generate documentation
         jobs[job_id]['message'] = 'Generating documentation...'
