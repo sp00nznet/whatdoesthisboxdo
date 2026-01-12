@@ -1061,11 +1061,12 @@ context = 3
                     'group': 'root',
                     'mode': '0755'
                 },
-                'loop':
-                    - '/opt/apps'
-                    - '/opt/scripts'
-                    - '/srv/data'
-                    - '/var/log/apps'
+                'loop': [
+                    '/opt/apps',
+                    '/opt/scripts',
+                    '/srv/data',
+                    '/var/log/apps'
+                ]
             },
             {
                 'name': 'Create user-specific directories',
