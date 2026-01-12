@@ -207,6 +207,7 @@ The tool generates comprehensive Ansible playbooks (`ansible-full/`) that can re
 | Cron Jobs | User crontabs, /etc/cron.d files, scheduled tasks |
 | Network | Hostname, /etc/hosts, firewall rules (UFW), netplan configs |
 | Configuration | SSH config, sudoers, sysctl, system limits, environment variables |
+| Secrets | GPG keyrings, SSH private keys, SSH host keys (with security flags) |
 
 ### Generate Full Ansible Playbooks Only
 
@@ -250,6 +251,11 @@ ansible-playbook -i inventory site.yml --tags "docker"
 
 # Only filesystem (directories + mounts)
 ansible-playbook -i inventory site.yml --tags "filesystem"
+
+# Only restore GPG keyrings and SSH keys
+ansible-playbook -i inventory site.yml --tags "secrets" \
+  -e "import_gpg_secret_keys=true" \
+  -e "copy_ssh_private_keys=true"
 ```
 
 ## System State Collection Script
@@ -275,6 +281,8 @@ This collects:
 - Directory structures (/opt, /srv, /var/www, etc.)
 - Network configuration and firewall rules
 - System configuration files
+- GPG keyrings (public and secret keys exported)
+- SSH private keys and host keys
 
 ### Documentation Includes
 
