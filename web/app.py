@@ -73,8 +73,8 @@ def analyze_server(job_id, hostname, username, password=None, ssh_key=None, port
             ssh_config = SSHConfig(
                 hostname=hostname,
                 username=username,
-                password=password,
-                key_file=ssh_key,
+                password=password if password else None,
+                private_key_path=ssh_key if ssh_key else None,
                 port=port
             )
             analyzer = SystemAnalyzer(remote_config=ssh_config)
