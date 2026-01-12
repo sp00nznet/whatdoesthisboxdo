@@ -403,26 +403,47 @@ class SystemAnalyzer:
         """Infer the primary purpose of the server based on analysis"""
         purposes = []
         processes = self.analysis_data.get('processes', {})
+        services = processes.get('services', [])
 
-        # Check for common server types
+        # Check for common server types (Linux + Windows)
         service_indicators = {
+            # Linux services
             'web_server': ['nginx', 'apache', 'httpd', 'caddy'],
             'database': ['mysql', 'postgres', 'mongodb', 'redis', 'mariadb'],
             'container_host': ['docker', 'containerd', 'podman'],
             'kubernetes': ['kubelet', 'kube-proxy', 'etcd'],
-            'ci_cd': ['jenkins', 'gitlab-runner', 'drone'],
+            'ci_cd': ['jenkins', 'gitlab-runner', 'drone', 'teamcity'],
             'monitoring': ['prometheus', 'grafana', 'zabbix', 'nagios'],
             'mail_server': ['postfix', 'dovecot', 'sendmail'],
             'file_server': ['smbd', 'nfsd', 'vsftpd'],
             'load_balancer': ['haproxy', 'traefik', 'envoy'],
-            'message_queue': ['rabbitmq', 'kafka', 'activemq']
+            'message_queue': ['rabbitmq', 'kafka', 'activemq'],
+            # Windows services
+            'iis_web_server': ['w3svc', 'iisadmin', 'w3wp', 'was'],
+            'sql_server': ['mssqlserver', 'sqlservr', 'sqlwriter', 'sqlagent'],
+            'backup_server': ['veeam', 'veeambackup', 'veeamtransport', 'veeamdeploysvc'],
+            'domain_controller': ['ntds', 'kdc', 'netlogon', 'adws'],
+            'exchange_server': ['msexchange', 'edgetransport'],
+            'hyperv_host': ['vmms', 'vmcompute', 'vmwp'],
+            'remote_desktop': ['termservice', 'sessionenv'],
+            'wsus_server': ['wsusservice', 'updateservices'],
+            'dhcp_server': ['dhcpserver'],
+            'dns_server': ['dns'],
+            'print_server': ['spooler'],
+            'sccm': ['ccmexec', 'smsagenthost'],
         }
 
+        # Combine running processes and services
         running_procs = [p.get('name', '').lower() for p in processes.get('running', [])]
+        running_svcs = [s.get('name', '').lower() for s in services
+                       if s.get('status') in ['running', 'Running'] or s.get('active') == 'active']
+        all_running = running_procs + running_svcs
 
         for purpose, indicators in service_indicators.items():
-            if any(ind in ' '.join(running_procs) for ind in indicators):
-                purposes.append(purpose)
+            if any(ind in name for name in all_running for ind in indicators):
+                # Format purpose name nicely
+                formatted_purpose = purpose.replace('_', ' ').title()
+                purposes.append(formatted_purpose)
 
         return ', '.join(purposes) if purposes else 'General purpose server'
 

@@ -18,6 +18,28 @@ class DocumentationGenerator:
         self.data = analysis_data
         self.hostname = analysis_data.get('hostname', 'unknown')
         self.os_info = analysis_data.get('os_info', {})
+        self.os_type = analysis_data.get('os_type', 'linux')
+
+    def _get_os_display_name(self) -> str:
+        """Get the OS display name, handling both Linux and Windows"""
+        if self.os_type == 'windows':
+            # Windows: use 'name' key (e.g., "Microsoft Windows Server 2022 Standard")
+            return self.os_info.get('name', 'Windows Server')
+        else:
+            # Linux: use 'distro' key
+            return self.os_info.get('distro', 'Linux')
+
+    def _get_os_version(self) -> str:
+        """Get the OS version, handling both Linux and Windows"""
+        if self.os_type == 'windows':
+            # Windows: combine version and build
+            version = self.os_info.get('version', '')
+            build = self.os_info.get('build', '')
+            if build:
+                return f"Build {build}"
+            return version or ''
+        else:
+            return self.os_info.get('version', '')
 
     def generate(self, output_path: str) -> str:
         """Generate full documentation"""
@@ -53,8 +75,8 @@ class DocumentationGenerator:
 
     def _generate_header(self) -> str:
         """Generate beautiful document header"""
-        os_name = self.os_info.get('distro', 'Linux')
-        os_version = self.os_info.get('version', '')
+        os_name = self._get_os_display_name()
+        os_version = self._get_os_version()
 
         return f"""<div align="center">
 
@@ -124,63 +146,144 @@ class DocumentationGenerator:
         packages = self.data.get('files', {}).get('installed_packages', [])
         ports = self.data.get('processes', {}).get('listening_ports', [])
 
-        service_names = [s.get('name', '').lower() for s in services if s.get('active') == 'active']
+        # Handle both active states for Linux and Windows
+        service_names = [s.get('name', '').lower() for s in services
+                        if s.get('active') in ['active', 'running'] or s.get('status') in ['running', 'Running']]
         process_names = [p.get('name', '').lower() for p in processes]
         package_names = [p.get('name', '').lower() for p in packages]
         port_numbers = [p.get('port', 0) for p in ports]
 
+        # Combine service and process names for detection
+        all_running = set(service_names + process_names)
+
         roles = []
 
-        # Web Server Detection
+        # ===================
+        # WINDOWS-SPECIFIC DETECTION
+        # ===================
+
+        # Veeam Backup Server Detection
+        veeam_indicators = ['veeam', 'veeambackup', 'veeamagent', 'veeamtransport', 'veeamdeploysvc']
+        if any(v in name for name in all_running for v in veeam_indicators):
+            roles.append(('Backup Server (Veeam)', 0.95, 'Enterprise backup and disaster recovery using Veeam'))
+
+        # Microsoft SQL Server Detection
+        mssql_indicators = ['mssqlserver', 'sqlservr', 'mssql', 'sqlwriter', 'sqlagent', 'msdtssrvr']
+        if any(m in name for name in all_running for m in mssql_indicators):
+            roles.append(('Database Server (MSSQL)', 0.95, 'Microsoft SQL Server relational database'))
+
+        # IIS Web Server Detection
+        iis_indicators = ['w3svc', 'iisexpress', 'w3wp', 'inetinfo', 'was']
+        if any(i in name for name in all_running for i in iis_indicators):
+            roles.append(('Web Server (IIS)', 0.9, 'Microsoft IIS web server'))
+
+        # Active Directory / Domain Controller Detection
+        ad_indicators = ['ntds', 'adws', 'kdc', 'netlogon', 'dfsr', 'ntfrs', 'dns', 'ismserv']
+        ad_count = sum(1 for a in ad_indicators if any(a in name for name in all_running))
+        if ad_count >= 3:
+            roles.append(('Domain Controller', 0.95, 'Active Directory Domain Services'))
+        elif ad_count >= 1:
+            roles.append(('AD Member Server', 0.7, 'Active Directory integrated server'))
+
+        # Exchange Server Detection
+        exchange_indicators = ['msexchangetransport', 'msexchangeis', 'msexchange', 'edgetransport']
+        if any(e in name for name in all_running for e in exchange_indicators):
+            roles.append(('Mail Server (Exchange)', 0.95, 'Microsoft Exchange email server'))
+
+        # Hyper-V Virtualization Detection
+        hyperv_indicators = ['vmms', 'vmcompute', 'vmwp', 'hvax', 'vmicheartbeat']
+        if any(h in name for name in all_running for h in hyperv_indicators):
+            roles.append(('Virtualization Host (Hyper-V)', 0.9, 'Microsoft Hyper-V virtualization'))
+
+        # Windows Server Update Services (WSUS)
+        if any('wsus' in name or 'updateservices' in name for name in all_running):
+            roles.append(('Update Server (WSUS)', 0.9, 'Windows Server Update Services'))
+
+        # Remote Desktop Services
+        rds_indicators = ['termservice', 'sessionenv', 'umrdpservice', 'rdagentbootloader']
+        if any(r in name for name in all_running for r in rds_indicators):
+            roles.append(('Remote Desktop Server', 0.85, 'Remote Desktop Services / Terminal Server'))
+
+        # Print Server Detection
+        if any('spooler' in name or 'printnotify' in name for name in all_running):
+            roles.append(('Print Server', 0.7, 'Windows Print Services'))
+
+        # DHCP Server
+        if any('dhcpserver' in name for name in all_running):
+            roles.append(('DHCP Server', 0.9, 'Dynamic Host Configuration Protocol server'))
+
+        # Windows DNS Server (separate from AD)
+        if any('dns' in name for name in all_running) and 'Domain Controller' not in [r[0] for r in roles]:
+            roles.append(('DNS Server', 0.8, 'Domain Name System server'))
+
+        # SCCM / Configuration Manager
+        sccm_indicators = ['ccmexec', 'smsagenthost', 'sccm', 'smsexec']
+        if any(s in name for name in all_running for s in sccm_indicators):
+            roles.append(('SCCM Server', 0.85, 'System Center Configuration Manager'))
+
+        # ===================
+        # LINUX/CROSS-PLATFORM DETECTION
+        # ===================
+
+        # Web Server Detection (Linux)
         web_indicators = ['nginx', 'apache2', 'httpd', 'caddy', 'lighttpd']
-        if any(w in service_names or w in process_names for w in web_indicators):
+        if any(w in name for name in all_running for w in web_indicators):
             roles.append(('Web Server', 0.9, 'Serves HTTP/HTTPS traffic to clients'))
 
-        # Database Detection
+        # Database Detection (Linux/Cross-platform)
         db_indicators = {
             'mysql': 'MySQL relational database',
             'mariadb': 'MariaDB relational database',
             'postgresql': 'PostgreSQL relational database',
+            'postgres': 'PostgreSQL relational database',
             'mongodb': 'MongoDB document database',
+            'mongod': 'MongoDB document database',
             'redis': 'Redis in-memory data store',
             'elasticsearch': 'Elasticsearch search engine',
         }
         for db, desc in db_indicators.items():
-            if db in service_names or db in process_names:
+            if any(db in name for name in all_running):
                 roles.append(('Database Server', 0.9, f'Runs {desc}'))
+                break  # Only add once
 
         # Container/Orchestration Detection
-        if 'docker' in service_names or 'containerd' in process_names:
-            if 'kubelet' in service_names or 'k3s' in process_names:
+        if any('docker' in name or 'containerd' in name for name in all_running):
+            if any('kubelet' in name or 'k3s' in name for name in all_running):
                 roles.append(('Kubernetes Node', 0.9, 'Part of a Kubernetes cluster'))
             else:
                 roles.append(('Container Host', 0.85, 'Runs containerized applications via Docker'))
 
         # CI/CD Detection
-        ci_indicators = ['gitlab-runner', 'jenkins', 'drone', 'buildkite']
-        if any(ci in service_names or ci in process_names for ci in ci_indicators):
+        ci_indicators = ['gitlab-runner', 'jenkins', 'drone', 'buildkite', 'teamcity', 'azureagent']
+        if any(ci in name for name in all_running for ci in ci_indicators):
             roles.append(('CI/CD Runner', 0.85, 'Executes continuous integration/deployment pipelines'))
 
         # Monitoring Detection
-        mon_indicators = ['prometheus', 'grafana', 'zabbix', 'nagios', 'influxdb']
-        if any(m in service_names or m in process_names for m in mon_indicators):
+        mon_indicators = ['prometheus', 'grafana', 'zabbix', 'nagios', 'influxdb', 'telegraf', 'datadog']
+        if any(m in name for name in all_running for m in mon_indicators):
             roles.append(('Monitoring Server', 0.8, 'Collects and visualizes system metrics'))
 
-        # Mail Server Detection
-        if any(m in service_names for m in ['postfix', 'dovecot', 'exim', 'sendmail']):
+        # Mail Server Detection (Linux)
+        if any(m in name for name in all_running for m in ['postfix', 'dovecot', 'exim', 'sendmail']):
             roles.append(('Mail Server', 0.85, 'Handles email sending/receiving'))
 
-        # File Server Detection
-        if any(f in service_names for f in ['smbd', 'nfs-server', 'vsftpd', 'proftpd']):
+        # File Server Detection (Linux)
+        if any(f in name for name in all_running for f in ['smbd', 'nfs', 'vsftpd', 'proftpd']):
             roles.append(('File Server', 0.8, 'Provides file sharing services'))
 
         # Load Balancer Detection
-        if any(lb in service_names or lb in process_names for lb in ['haproxy', 'traefik']):
+        if any(lb in name for name in all_running for lb in ['haproxy', 'traefik', 'envoy']):
             roles.append(('Load Balancer', 0.85, 'Distributes traffic across backend servers'))
 
         # VPN/Gateway Detection
-        if any(v in service_names for v in ['openvpn', 'wireguard', 'strongswan']):
+        if any(v in name for name in all_running for v in ['openvpn', 'wireguard', 'strongswan']):
             roles.append(('VPN Gateway', 0.8, 'Provides secure network access'))
+
+        # VMware Detection
+        vmware_indicators = ['vmware', 'vmtoolsd', 'vmware-tools']
+        if any(v in name for name in all_running for v in vmware_indicators):
+            # This is a VM, not a host - don't add as a role
+            pass
 
         # Application Server Detection (generic)
         app_ports = [3000, 4000, 5000, 8000, 8080, 8443, 9000]
@@ -215,12 +318,17 @@ class DocumentationGenerator:
     def _get_service_significance(self, service_name: str) -> str:
         """Get a human-readable significance for a service"""
         significance_map = {
+            # Linux services
             'nginx': 'Reverse proxy / Web server',
             'apache2': 'Web server',
+            'httpd': 'Web server',
             'mysql': 'Primary database',
+            'mariadb': 'Primary database',
             'postgresql': 'Primary database',
+            'mongodb': 'Document database',
             'redis': 'Caching / Session store',
             'docker': 'Container runtime',
+            'containerd': 'Container runtime',
             'sshd': 'Remote access',
             'cron': 'Scheduled tasks',
             'systemd': 'System init',
@@ -228,8 +336,50 @@ class DocumentationGenerator:
             'grafana': 'Metrics visualization',
             'haproxy': 'Load balancing',
             'postfix': 'Mail delivery',
+            'kubelet': 'Kubernetes node agent',
+            # Windows services
+            'w3svc': 'IIS Web Server',
+            'iisadmin': 'IIS Administration',
+            'mssqlserver': 'SQL Server Database',
+            'sqlserveragent': 'SQL Server Agent (jobs)',
+            'sqlwriter': 'SQL Server VSS Writer',
+            'veeambackupsvc': 'Veeam Backup Service',
+            'veeamtransportsvc': 'Veeam Data Transport',
+            'veeamdeploysvc': 'Veeam Deployment',
+            'veeamnfssvc': 'Veeam NFS Service',
+            'vmms': 'Hyper-V Management',
+            'vmcompute': 'Hyper-V Compute',
+            'ntds': 'Active Directory',
+            'kdc': 'Kerberos Key Distribution',
+            'netlogon': 'AD Net Logon',
+            'dns': 'DNS Server',
+            'dhcpserver': 'DHCP Server',
+            'termservice': 'Remote Desktop Services',
+            'spooler': 'Print Spooler',
+            'wuauserv': 'Windows Update',
+            'wsusservice': 'WSUS Server',
+            'msexchangetransport': 'Exchange Transport',
+            'msexchangeis': 'Exchange Information Store',
+            'bits': 'Background Transfer',
+            'lanmanserver': 'File Sharing (SMB)',
+            'lanmanworkstation': 'SMB Client',
+            'winrm': 'Remote Management',
+            'eventlog': 'Event Logging',
+            'ccmexec': 'SCCM Client Agent',
+            'wlansvc': 'Wireless LAN',
+            'mpssvc': 'Windows Firewall',
+            'windefend': 'Windows Defender',
+            'seclogon': 'Secondary Logon',
         }
-        return significance_map.get(service_name.lower(), 'System service')
+        name_lower = service_name.lower()
+        # Direct match first
+        if name_lower in significance_map:
+            return significance_map[name_lower]
+        # Partial match for Windows services that may have different names
+        for key, value in significance_map.items():
+            if key in name_lower or name_lower in key:
+                return value
+        return 'System service'
 
     def _generate_system_identity(self) -> str:
         """Generate system identity section"""
@@ -240,16 +390,31 @@ class DocumentationGenerator:
         total_mem_gb = round(memory.get('total', 0) / 1024 / 1024 / 1024, 1)
         cpu_count = cpu.get('count', 'N/A')
 
+        os_name = self._get_os_display_name()
+        os_version = self._get_os_version()
+
+        # Third row depends on OS type
+        if self.os_type == 'windows':
+            third_row_label = "Build"
+            third_row_value = self.os_info.get('build', 'Unknown')
+        else:
+            third_row_label = "Kernel"
+            third_row_value = self.os_info.get('kernel', 'Unknown')
+
         doc = """## System Identity
 
 """
+        # Calculate padding for third row
+        third_row_padding = 55 - len(third_row_label)
+        third_row_formatted = f"{third_row_value:<{third_row_padding}}"
+
         doc += f"""```
 +{'='*60}+
 |  HOSTNAME: {self.hostname:<47} |
 +{'='*60}+
-|  OS: {self.os_info.get('distro', 'Unknown'):<52} |
-|  Version: {self.os_info.get('version', 'Unknown'):<47} |
-|  Kernel: {self.os_info.get('kernel', 'Unknown'):<48} |
+|  OS: {os_name:<52} |
+|  Version: {os_version:<47} |
+|  {third_row_label}: {third_row_formatted} |
 +{'-'*60}+
 |  CPUs: {str(cpu_count):<53} |
 |  Memory: {str(total_mem_gb) + ' GB':<51} |
