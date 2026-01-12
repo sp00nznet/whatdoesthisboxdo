@@ -735,6 +735,450 @@ def api_list_credentials():
     } for c in credentials])
 
 
+# =============================================================================
+# REST API v1
+# =============================================================================
+
+def api_key_required(f):
+    """Decorator to require API key authentication."""
+    @functools.wraps(f)
+    def decorated_function(*args, **kwargs):
+        api_key = request.headers.get('X-API-Key') or request.args.get('api_key')
+        stored_key = os.environ.get('API_KEY', '')
+
+        if not stored_key:
+            return jsonify({'error': 'API not configured. Set API_KEY environment variable.'}), 503
+
+        if not api_key or api_key != stored_key:
+            return jsonify({'error': 'Invalid or missing API key'}), 401
+
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+def api_response(data=None, error=None, status=200):
+    """Helper to create consistent API responses."""
+    response = {'success': error is None}
+    if data is not None:
+        response['data'] = data
+    if error:
+        response['error'] = error
+    return jsonify(response), status
+
+
+@app.route('/api/v1/analyze', methods=['POST'])
+@api_key_required
+def api_analyze():
+    """
+    Start a single server analysis.
+
+    POST /api/v1/analyze
+    Headers: X-API-Key: <your-api-key>
+    Body (JSON):
+        {
+            "hostname": "server.example.com",
+            "username": "root",
+            "password": "secret",      // or use ssh_key
+            "ssh_key": "...",          // SSH private key content
+            "port": 22,                // optional, default 22
+            "os_type": "linux",        // optional: linux or windows
+            "credential_id": 1         // optional: use saved credential instead
+        }
+    """
+    data = request.get_json()
+    if not data:
+        return api_response(error='Request body must be JSON', status=400)
+
+    hostname = data.get('hostname', '').strip()
+    credential_id = data.get('credential_id')
+
+    if credential_id:
+        cred = get_credential(credential_id=int(credential_id))
+        if not cred:
+            return api_response(error='Credential not found', status=404)
+        username = cred['username']
+        password = cred.get('password', '')
+        ssh_key = cred.get('ssh_key', '')
+        port = data.get('port', cred.get('port', 22))
+        os_type = data.get('os_type', cred.get('os_type', 'linux'))
+        if not hostname and cred.get('hostname'):
+            hostname = cred['hostname']
+    else:
+        username = data.get('username', '').strip()
+        password = data.get('password', '')
+        ssh_key = data.get('ssh_key', '')
+        port = data.get('port', 22)
+        os_type = data.get('os_type', 'linux')
+
+    if not hostname:
+        return api_response(error='hostname is required', status=400)
+    if not username:
+        return api_response(error='username is required', status=400)
+    if not credential_id and not password and not ssh_key:
+        return api_response(error='password or ssh_key is required', status=400)
+
+    job_id = str(uuid.uuid4())
+    jobs[job_id] = {
+        'status': 'pending',
+        'message': 'Starting analysis...',
+        'hostname': hostname,
+        'created': datetime.now().isoformat()
+    }
+
+    thread = threading.Thread(
+        target=analyze_server,
+        args=(job_id, hostname, username, password, ssh_key, port, os_type)
+    )
+    thread.daemon = True
+    thread.start()
+
+    return api_response(data={
+        'job_id': job_id,
+        'status': 'pending',
+        'message': 'Analysis started'
+    }, status=202)
+
+
+@app.route('/api/v1/batch', methods=['POST'])
+@api_key_required
+def api_batch():
+    """
+    Start batch analysis for multiple servers.
+
+    POST /api/v1/batch
+    Headers: X-API-Key: <your-api-key>
+    Body (JSON):
+        {
+            "servers": [
+                {"hostname": "server1.example.com"},
+                {"hostname": "server2.example.com", "port": 2222}
+            ],
+            "credential_id": 1  // Apply this credential to all servers
+        }
+        // OR include credentials per server:
+        {
+            "servers": [
+                {"hostname": "server1.example.com", "username": "root", "password": "secret"},
+                {"hostname": "server2.example.com", "username": "admin", "ssh_key": "..."}
+            ]
+        }
+    """
+    data = request.get_json()
+    if not data:
+        return api_response(error='Request body must be JSON', status=400)
+
+    servers = data.get('servers', [])
+    if not servers:
+        return api_response(error='servers array is required', status=400)
+
+    credential_id = data.get('credential_id')
+    saved_cred = None
+    if credential_id:
+        saved_cred = get_credential(credential_id=int(credential_id))
+        if not saved_cred:
+            return api_response(error='Credential not found', status=404)
+
+    batch_id = str(uuid.uuid4())[:8]
+    created_jobs = []
+
+    for server in servers:
+        hostname = server.get('hostname', '').strip()
+        if not hostname:
+            continue
+
+        if saved_cred:
+            username = saved_cred['username']
+            password = saved_cred.get('password', '')
+            ssh_key = saved_cred.get('ssh_key', '')
+            port = server.get('port', saved_cred.get('port', 22))
+            os_type = server.get('os_type', saved_cred.get('os_type', 'linux'))
+        else:
+            username = server.get('username', '').strip()
+            password = server.get('password', '')
+            ssh_key = server.get('ssh_key', '')
+            port = server.get('port', 22)
+            os_type = server.get('os_type', 'linux')
+
+        if not username:
+            continue
+
+        job_id = str(uuid.uuid4())
+        jobs[job_id] = {
+            'status': 'pending',
+            'message': 'Queued for analysis...',
+            'hostname': hostname,
+            'batch_id': batch_id,
+            'created': datetime.now().isoformat()
+        }
+
+        thread = threading.Thread(
+            target=analyze_server,
+            args=(job_id, hostname, username, password, ssh_key, port, os_type)
+        )
+        thread.daemon = True
+        thread.start()
+
+        created_jobs.append({'job_id': job_id, 'hostname': hostname})
+
+    if not created_jobs:
+        return api_response(error='No valid servers found', status=400)
+
+    return api_response(data={
+        'batch_id': batch_id,
+        'jobs': created_jobs,
+        'count': len(created_jobs)
+    }, status=202)
+
+
+@app.route('/api/v1/jobs', methods=['GET'])
+@api_key_required
+def api_list_jobs():
+    """
+    List all jobs.
+
+    GET /api/v1/jobs
+    GET /api/v1/jobs?batch_id=abc123
+    GET /api/v1/jobs?status=running
+    """
+    batch_id = request.args.get('batch_id')
+    status_filter = request.args.get('status')
+
+    job_list = []
+    for job_id, job in jobs.items():
+        if batch_id and job.get('batch_id') != batch_id:
+            continue
+        if status_filter and job.get('status') != status_filter:
+            continue
+
+        job_list.append({
+            'job_id': job_id,
+            'status': job.get('status'),
+            'message': job.get('message'),
+            'hostname': job.get('hostname'),
+            'batch_id': job.get('batch_id'),
+            'created': job.get('created')
+        })
+
+    job_list.sort(key=lambda x: x['created'], reverse=True)
+    return api_response(data={'jobs': job_list, 'count': len(job_list)})
+
+
+@app.route('/api/v1/jobs/<job_id>', methods=['GET'])
+@api_key_required
+def api_get_job(job_id):
+    """
+    Get job status and details.
+
+    GET /api/v1/jobs/<job_id>
+    """
+    job = jobs.get(job_id)
+    if not job:
+        return api_response(error='Job not found', status=404)
+
+    result = {
+        'job_id': job_id,
+        'status': job.get('status'),
+        'message': job.get('message'),
+        'hostname': job.get('hostname'),
+        'batch_id': job.get('batch_id'),
+        'created': job.get('created'),
+        'error': job.get('error')
+    }
+
+    if job.get('status') == 'completed' and job.get('result'):
+        result['files'] = {
+            'markdown': job['result'].get('markdown_file'),
+            'html': job['result'].get('html_file'),
+            'json': job['result'].get('json_file')
+        }
+
+    return api_response(data=result)
+
+
+@app.route('/api/v1/jobs/<job_id>/result', methods=['GET'])
+@api_key_required
+def api_get_job_result(job_id):
+    """
+    Get job result data.
+
+    GET /api/v1/jobs/<job_id>/result
+    GET /api/v1/jobs/<job_id>/result?format=json  (default)
+    GET /api/v1/jobs/<job_id>/result?format=markdown
+    GET /api/v1/jobs/<job_id>/result?format=html
+    """
+    job = jobs.get(job_id)
+    if not job:
+        return api_response(error='Job not found', status=404)
+
+    if job.get('status') != 'completed':
+        return api_response(error=f'Job is not completed (status: {job.get("status")})', status=400)
+
+    result = job.get('result', {})
+    format_type = request.args.get('format', 'json')
+
+    if format_type == 'json':
+        return api_response(data=result.get('data', {}))
+    elif format_type == 'markdown':
+        md_file = result.get('markdown_file')
+        if md_file:
+            md_path = OUTPUT_FOLDER / md_file
+            if md_path.exists():
+                return send_file(md_path, mimetype='text/markdown')
+        return api_response(error='Markdown file not found', status=404)
+    elif format_type == 'html':
+        html_file = result.get('html_file')
+        if html_file:
+            html_path = OUTPUT_FOLDER / html_file
+            if html_path.exists():
+                return send_file(html_path, mimetype='text/html')
+        return api_response(error='HTML file not found', status=404)
+    else:
+        return api_response(error='Invalid format. Use: json, markdown, or html', status=400)
+
+
+@app.route('/api/v1/credentials', methods=['GET', 'POST'])
+@api_key_required
+def api_credentials_list():
+    """
+    List or create credentials.
+
+    GET /api/v1/credentials - List all credentials
+    POST /api/v1/credentials - Create a new credential
+        Body: {"name": "...", "username": "...", "password": "...", ...}
+    """
+    if request.method == 'GET':
+        credentials = list_credentials(include_secrets=False)
+        return api_response(data={'credentials': credentials, 'count': len(credentials)})
+
+    # POST - create credential
+    data = request.get_json()
+    if not data:
+        return api_response(error='Request body must be JSON', status=400)
+
+    name = data.get('name', '').strip()
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+    ssh_key = data.get('ssh_key', '')
+    hostname = data.get('hostname', '').strip()
+    port = data.get('port', 22)
+    os_type = data.get('os_type', 'linux')
+    description = data.get('description', '').strip()
+
+    if not name:
+        return api_response(error='name is required', status=400)
+    if not username:
+        return api_response(error='username is required', status=400)
+
+    cred_id = save_credential(name, hostname, username, password, ssh_key, port, os_type, description)
+    return api_response(data={'id': cred_id, 'name': name, 'message': 'Credential created'}, status=201)
+
+
+@app.route('/api/v1/credentials/<int:cred_id>', methods=['GET', 'PUT', 'DELETE'])
+@api_key_required
+def api_credential_detail(cred_id):
+    """
+    Get, update, or delete a credential.
+
+    GET /api/v1/credentials/<id> - Get credential details
+    PUT /api/v1/credentials/<id> - Update credential
+    DELETE /api/v1/credentials/<id> - Delete credential
+    """
+    credential = get_credential(credential_id=cred_id)
+    if not credential:
+        return api_response(error='Credential not found', status=404)
+
+    if request.method == 'GET':
+        # Return without secrets
+        return api_response(data={
+            'id': credential['id'],
+            'name': credential['name'],
+            'hostname': credential['hostname'],
+            'username': credential['username'],
+            'port': credential['port'],
+            'os_type': credential['os_type'],
+            'description': credential['description'],
+            'has_password': credential['has_password'],
+            'has_ssh_key': credential['has_ssh_key'],
+            'created_at': str(credential['created_at']),
+            'updated_at': str(credential['updated_at'])
+        })
+
+    if request.method == 'DELETE':
+        if delete_credential(cred_id):
+            return api_response(data={'message': 'Credential deleted'})
+        return api_response(error='Failed to delete credential', status=500)
+
+    # PUT - update credential
+    data = request.get_json()
+    if not data:
+        return api_response(error='Request body must be JSON', status=400)
+
+    name = data.get('name', credential['name']).strip()
+    username = data.get('username', credential['username']).strip()
+    password = data.get('password', credential.get('password', ''))
+    ssh_key = data.get('ssh_key', credential.get('ssh_key', ''))
+    hostname = data.get('hostname', credential['hostname']).strip() if data.get('hostname') is not None else credential['hostname']
+    port = data.get('port', credential['port'])
+    os_type = data.get('os_type', credential['os_type'])
+    description = data.get('description', credential.get('description', '')).strip()
+
+    save_credential(name, hostname, username, password, ssh_key, port, os_type, description)
+    return api_response(data={'id': cred_id, 'message': 'Credential updated'})
+
+
+@app.route('/api/v1/docs', methods=['GET'])
+@api_key_required
+def api_list_docs():
+    """
+    List all generated documentation files.
+
+    GET /api/v1/docs
+    """
+    docs = []
+    for f in OUTPUT_FOLDER.glob('*.json'):
+        stat = f.stat()
+        base_name = f.stem
+        docs.append({
+            'name': base_name,
+            'files': {
+                'json': f.name,
+                'markdown': f'{base_name}.md' if (OUTPUT_FOLDER / f'{base_name}.md').exists() else None,
+                'html': f'{base_name}.html' if (OUTPUT_FOLDER / f'{base_name}.html').exists() else None
+            },
+            'size': stat.st_size,
+            'created': datetime.fromtimestamp(stat.st_ctime).isoformat()
+        })
+
+    docs.sort(key=lambda x: x['created'], reverse=True)
+    return api_response(data={'documents': docs, 'count': len(docs)})
+
+
+@app.route('/api/v1/docs/<filename>', methods=['GET'])
+@api_key_required
+def api_get_doc(filename):
+    """
+    Download a documentation file.
+
+    GET /api/v1/docs/<filename>
+    """
+    # Security: prevent path traversal
+    safe_filename = Path(filename).name
+    file_path = OUTPUT_FOLDER / safe_filename
+
+    if not file_path.exists():
+        return api_response(error='File not found', status=404)
+
+    mimetype = 'application/octet-stream'
+    if safe_filename.endswith('.json'):
+        mimetype = 'application/json'
+    elif safe_filename.endswith('.md'):
+        mimetype = 'text/markdown'
+    elif safe_filename.endswith('.html'):
+        mimetype = 'text/html'
+
+    return send_file(file_path, mimetype=mimetype)
+
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('DEBUG', 'false').lower() == 'true'
