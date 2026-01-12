@@ -515,10 +515,16 @@ def view_doc(filename):
         return redirect(url_for('docs_list'))
 
 
-@app.route('/download/<filename>')
+@app.route('/download/<path:filename>')
 def download_doc(filename):
-    """Download generated documentation."""
-    file_path = OUTPUT_FOLDER / filename
+    """Download generated documentation or output file."""
+    # Security: prevent path traversal
+    safe_path = Path(filename)
+    if '..' in safe_path.parts:
+        flash('Invalid file path', 'error')
+        return redirect(url_for('docs_list'))
+
+    file_path = OUTPUT_FOLDER / safe_path
 
     if not file_path.exists():
         flash('File not found', 'error')
@@ -627,22 +633,43 @@ def download_output(output_dir, output_type):
 
 @app.route('/docs')
 def docs_list():
-    """List all generated documentation."""
+    """List all generated documentation and IaC outputs."""
     docs = []
+    outputs = []
 
-    for file in OUTPUT_FOLDER.glob('*'):
-        if file.suffix in ['.md', '.html', '.json']:
+    for item in OUTPUT_FOLDER.iterdir():
+        if item.is_file() and item.suffix in ['.md', '.html', '.json']:
             docs.append({
-                'name': file.name,
-                'type': file.suffix[1:].upper(),
-                'size': file.stat().st_size,
-                'modified': datetime.fromtimestamp(file.stat().st_mtime).isoformat()
+                'name': item.name,
+                'type': item.suffix[1:].upper(),
+                'size': item.stat().st_size,
+                'modified': datetime.fromtimestamp(item.stat().st_mtime).isoformat()
             })
+        elif item.is_dir():
+            # Check for IaC outputs in this directory
+            available = {
+                'ansible': (item / 'ansible').exists(),
+                'ansible_full': (item / 'ansible-full').exists(),
+                'terraform_vsphere': (item / 'terraform-vsphere').exists(),
+                'terraform_aws': (item / 'terraform-aws').exists(),
+                'terraform_gcp': (item / 'terraform-gcp').exists(),
+                'terraform_azure': (item / 'terraform-azure').exists(),
+                'cost_estimate': (item / 'cost-estimate.json').exists()
+            }
+
+            # Only include if at least one output is available
+            if any(available.values()):
+                outputs.append({
+                    'name': item.name,
+                    'available': available,
+                    'modified': datetime.fromtimestamp(item.stat().st_mtime).isoformat()
+                })
 
     # Sort by modification time (newest first)
     docs.sort(key=lambda x: x['modified'], reverse=True)
+    outputs.sort(key=lambda x: x['modified'], reverse=True)
 
-    return render_template('docs.html', docs=docs)
+    return render_template('docs.html', docs=docs, outputs=outputs)
 
 
 @app.route('/api/docs')
