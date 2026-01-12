@@ -212,6 +212,15 @@ def batch():
             flash('Please upload a CSV file', 'error')
             return render_template('batch.html')
 
+        # Check for saved credential
+        saved_cred = None
+        saved_credential_id = request.form.get('saved_credential')
+        if saved_credential_id:
+            saved_cred = get_credential(credential_id=int(saved_credential_id))
+            if not saved_cred:
+                flash('Selected credential not found', 'error')
+                return render_template('batch.html')
+
         # Parse CSV
         try:
             content = file.read().decode('utf-8')
@@ -222,11 +231,21 @@ def batch():
 
             for row in reader:
                 hostname = row.get('hostname', row.get('host', '')).strip()
-                username = row.get('username', row.get('user', '')).strip()
-                password = row.get('password', row.get('pass', ''))
-                ssh_key = row.get('ssh_key', row.get('key', '')).strip()
-                port = int(row.get('port', 22))
-                os_type = row.get('os_type', row.get('os', 'linux')).lower()
+
+                # Use saved credential or CSV values
+                if saved_cred:
+                    username = saved_cred['username']
+                    password = saved_cred.get('password', '')
+                    ssh_key = saved_cred.get('ssh_key', '')
+                    # Use CSV port/os_type if provided, otherwise use credential defaults
+                    port = int(row.get('port', saved_cred.get('port', 22)))
+                    os_type = row.get('os_type', row.get('os', saved_cred.get('os_type', 'linux'))).lower()
+                else:
+                    username = row.get('username', row.get('user', '')).strip()
+                    password = row.get('password', row.get('pass', ''))
+                    ssh_key = row.get('ssh_key', row.get('key', '')).strip()
+                    port = int(row.get('port', 22))
+                    os_type = row.get('os_type', row.get('os', 'linux')).lower()
 
                 if not hostname or not username:
                     continue
