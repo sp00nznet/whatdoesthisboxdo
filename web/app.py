@@ -483,15 +483,24 @@ def admin_add_credential():
         hostname = request.form.get('hostname', '').strip()
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
-        ssh_key = request.form.get('ssh_key', '').strip()
         port = int(request.form.get('port', 22))
         os_type = request.form.get('os_type', 'linux')
         description = request.form.get('description', '').strip()
 
+        # Handle SSH key file upload
+        ssh_key = ''
+        ssh_key_file = request.files.get('ssh_key_file')
+        if ssh_key_file and ssh_key_file.filename:
+            try:
+                ssh_key = ssh_key_file.read().decode('utf-8')
+            except UnicodeDecodeError:
+                flash('Invalid SSH key file - must be a text file', 'error')
+                return render_template('admin/credential_form.html', credential=None)
+
         if not name or not username:
             flash('Name and username are required', 'error')
         elif not password and not ssh_key:
-            flash('Either password or SSH key path is required', 'error')
+            flash('Either password or SSH key file is required', 'error')
         else:
             save_credential(name, hostname, username, password, ssh_key, port, os_type, description)
             flash(f'Credential "{name}" saved successfully', 'success')
@@ -514,16 +523,28 @@ def admin_edit_credential(cred_id):
         hostname = request.form.get('hostname', '').strip()
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
-        ssh_key = request.form.get('ssh_key', '').strip()
         port = int(request.form.get('port', 22))
         os_type = request.form.get('os_type', 'linux')
         description = request.form.get('description', '').strip()
 
-        # Keep existing password/key if not provided
+        # Handle SSH key file upload
+        ssh_key = ''
+        replace_key = request.form.get('replace_key') == '1'
+        ssh_key_file = request.files.get('ssh_key_file')
+
+        if replace_key and ssh_key_file and ssh_key_file.filename:
+            try:
+                ssh_key = ssh_key_file.read().decode('utf-8')
+            except UnicodeDecodeError:
+                flash('Invalid SSH key file - must be a text file', 'error')
+                return render_template('admin/credential_form.html', credential=credential)
+        elif not replace_key and credential.get('ssh_key'):
+            # Keep existing SSH key
+            ssh_key = credential['ssh_key']
+
+        # Keep existing password if not provided
         if not password and credential.get('password'):
             password = credential['password']
-        if not ssh_key and credential.get('ssh_key'):
-            ssh_key = credential['ssh_key']
 
         if not name or not username:
             flash('Name and username are required', 'error')
