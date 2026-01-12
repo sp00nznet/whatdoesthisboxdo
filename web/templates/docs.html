@@ -5,49 +5,224 @@
 {% block content %}
 <div class="page-header">
     <h1>Generated Documentation</h1>
-    <p>View and download documentation from previous analyses</p>
+    <p>View and download documentation and Infrastructure-as-Code from previous analyses</p>
 </div>
 
-{% if docs %}
-<div class="docs-list">
-    <table class="data-table">
-        <thead>
-            <tr>
-                <th>Filename</th>
-                <th>Type</th>
-                <th>Size</th>
-                <th>Last Modified</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for doc in docs %}
-            <tr>
-                <td>
-                    <code>{{ doc.name }}</code>
-                </td>
-                <td>
-                    <span class="type-badge type-{{ doc.type|lower }}">{{ doc.type }}</span>
-                </td>
-                <td>{{ (doc.size / 1024)|round(1) }} KB</td>
-                <td>{{ doc.modified[:19].replace('T', ' ') }}</td>
-                <td>
-                    <a href="{{ url_for('view_doc', filename=doc.name) }}" class="btn btn-primary btn-sm" target="_blank">View</a>
-                    <a href="{{ url_for('download_doc', filename=doc.name) }}" class="btn btn-secondary btn-sm">Download</a>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+{% if outputs %}
+<div class="docs-section">
+    <h2>Infrastructure as Code Outputs</h2>
+    <p>Download Ansible playbooks, Terraform configurations, and cost estimates</p>
+
+    <div class="outputs-list">
+        {% for output in outputs %}
+        <div class="output-card">
+            <div class="output-header">
+                <h3>{{ output.name }}</h3>
+                <span class="output-date">{{ output.modified[:19].replace('T', ' ') if output.modified else '' }}</span>
+            </div>
+
+            <div class="output-downloads">
+                {% if output.available.ansible or output.available.ansible_full %}
+                <div class="download-group">
+                    <h4>Ansible Playbooks</h4>
+                    <div class="download-buttons">
+                        {% if output.available.ansible %}
+                        <a href="{{ url_for('download_output', output_dir=output.name, output_type='ansible') }}" class="btn btn-secondary btn-sm">
+                            Basic Ansible (ZIP)
+                        </a>
+                        {% endif %}
+                        {% if output.available.ansible_full %}
+                        <a href="{{ url_for('download_output', output_dir=output.name, output_type='ansible-full') }}" class="btn btn-primary btn-sm">
+                            Full Recreation (ZIP)
+                        </a>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endif %}
+
+                {% if output.available.terraform_vsphere or output.available.terraform_aws or output.available.terraform_gcp or output.available.terraform_azure %}
+                <div class="download-group">
+                    <h4>Terraform Configurations</h4>
+                    <div class="download-buttons">
+                        {% if output.available.terraform_vsphere %}
+                        <a href="{{ url_for('download_output', output_dir=output.name, output_type='terraform-vsphere') }}" class="btn btn-secondary btn-sm">
+                            vSphere (ZIP)
+                        </a>
+                        {% endif %}
+                        {% if output.available.terraform_aws %}
+                        <a href="{{ url_for('download_output', output_dir=output.name, output_type='terraform-aws') }}" class="btn btn-secondary btn-sm">
+                            AWS (ZIP)
+                        </a>
+                        {% endif %}
+                        {% if output.available.terraform_gcp %}
+                        <a href="{{ url_for('download_output', output_dir=output.name, output_type='terraform-gcp') }}" class="btn btn-secondary btn-sm">
+                            GCP (ZIP)
+                        </a>
+                        {% endif %}
+                        {% if output.available.terraform_azure %}
+                        <a href="{{ url_for('download_output', output_dir=output.name, output_type='terraform-azure') }}" class="btn btn-secondary btn-sm">
+                            Azure (ZIP)
+                        </a>
+                        {% endif %}
+                        <a href="{{ url_for('download_output', output_dir=output.name, output_type='all-terraform') }}" class="btn btn-primary btn-sm">
+                            All Terraform (ZIP)
+                        </a>
+                    </div>
+                </div>
+                {% endif %}
+
+                {% if output.available.cost_estimate %}
+                <div class="download-group">
+                    <h4>Cost Estimate</h4>
+                    <div class="download-buttons">
+                        <a href="{{ url_for('download_doc', filename=output.name + '/cost-estimate.json') }}" class="btn btn-secondary btn-sm">
+                            Cost Estimate (JSON)
+                        </a>
+                    </div>
+                </div>
+                {% endif %}
+
+                <div class="download-group">
+                    <h4>Complete Package</h4>
+                    <div class="download-buttons">
+                        <a href="{{ url_for('download_output', output_dir=output.name, output_type='all') }}" class="btn btn-primary">
+                            Download All (ZIP)
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
 </div>
-{% else %}
+{% endif %}
+
+{% if docs %}
+<div class="docs-section">
+    <h2>Documentation Files</h2>
+    <p>View and download generated server documentation</p>
+
+    <div class="docs-list">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Filename</th>
+                    <th>Type</th>
+                    <th>Size</th>
+                    <th>Last Modified</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for doc in docs %}
+                <tr>
+                    <td>
+                        <code>{{ doc.name }}</code>
+                    </td>
+                    <td>
+                        <span class="type-badge type-{{ doc.type|lower }}">{{ doc.type }}</span>
+                    </td>
+                    <td>{{ (doc.size / 1024)|round(1) }} KB</td>
+                    <td>{{ doc.modified[:19].replace('T', ' ') }}</td>
+                    <td>
+                        <a href="{{ url_for('view_doc', filename=doc.name) }}" class="btn btn-primary btn-sm" target="_blank">View</a>
+                        <a href="{{ url_for('download_doc', filename=doc.name) }}" class="btn btn-secondary btn-sm">Download</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% if not docs and not outputs %}
 <div class="empty-state">
     <div class="empty-icon">&#128195;</div>
     <h3>No Documentation Yet</h3>
-    <p>Analyze a server to generate documentation.</p>
+    <p>Analyze a server to generate documentation and Infrastructure-as-Code.</p>
     <div class="empty-actions">
         <a href="{{ url_for('analyze') }}" class="btn btn-primary">Analyze Server</a>
     </div>
 </div>
 {% endif %}
+{% endblock %}
+
+{% block styles %}
+<style>
+.docs-section {
+    margin-bottom: 40px;
+}
+
+.docs-section h2 {
+    margin-bottom: 10px;
+    color: var(--text-primary);
+}
+
+.docs-section > p {
+    color: var(--text-secondary);
+    margin-bottom: 20px;
+}
+
+.outputs-list {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.output-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 20px;
+}
+
+.output-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.output-header h3 {
+    margin: 0;
+    font-family: monospace;
+    font-size: 1rem;
+}
+
+.output-date {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+.output-downloads {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 15px;
+}
+
+.download-group {
+    background: var(--bg-secondary);
+    padding: 12px;
+    border-radius: 6px;
+}
+
+.download-group h4 {
+    margin: 0 0 10px 0;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+.download-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.download-buttons .btn {
+    font-size: 0.8rem;
+}
+</style>
 {% endblock %}
