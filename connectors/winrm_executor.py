@@ -54,14 +54,19 @@ class WinRMExecutor:
             protocol = 'https' if self.config.use_ssl else 'http'
             endpoint = f"{protocol}://{self.config.hostname}:{self.config.port}/wsman"
 
-            self.session = winrm.Session(
-                endpoint,
-                auth=(self.config.username, self.config.password),
-                transport=self.config.transport,
-                server_cert_validation='ignore' if self.config.use_ssl else 'validate',
-                operation_timeout_sec=self.config.timeout,
-                read_timeout_sec=self.config.timeout + 10
-            )
+            # Build session kwargs
+            session_kwargs = {
+                'auth': (self.config.username, self.config.password),
+                'transport': self.config.transport,
+                'operation_timeout_sec': self.config.timeout,
+                'read_timeout_sec': self.config.timeout + 10
+            }
+
+            # Only set cert validation for HTTPS
+            if self.config.use_ssl:
+                session_kwargs['server_cert_validation'] = 'ignore'
+
+            self.session = winrm.Session(endpoint, **session_kwargs)
 
             # Test connection with a simple command
             result = self.session.run_ps('$env:COMPUTERNAME')
@@ -70,7 +75,10 @@ class WinRMExecutor:
                 logger.info(f"Connected to {self.config.hostname} via WinRM")
                 return True
             else:
-                logger.error(f"WinRM connection test failed: {result.std_err.decode('utf-8', errors='ignore')}")
+                stderr = result.std_err
+                if isinstance(stderr, bytes):
+                    stderr = stderr.decode('utf-8', errors='ignore')
+                logger.error(f"WinRM connection test failed: {stderr}")
                 return False
 
         except Exception as e:
@@ -84,13 +92,54 @@ class WinRMExecutor:
 
         try:
             if use_powershell:
-                result = self.session.run_ps(command)
+                # Try run_ps first
+                try:
+                    result = self.session.run_ps(command)
+                except TypeError as te:
+                    # Fallback: encode command as base64 and run via cmd
+                    if 'startswith' in str(te):
+                        import base64
+                        encoded = base64.b64encode(command.encode('utf-16-le')).decode('ascii')
+                        ps_cmd = f'powershell -EncodedCommand {encoded}'
+                        result = self.session.run_cmd(ps_cmd)
+                    else:
+                        raise
             else:
                 result = self.session.run_cmd(command)
 
-            stdout = result.std_out.decode('utf-8', errors='ignore')
-            stderr = result.std_err.decode('utf-8', errors='ignore')
+            # Handle both bytes and string responses
+            stdout = result.std_out
+            stderr = result.std_err
+
+            if isinstance(stdout, bytes):
+                stdout = stdout.decode('utf-8', errors='ignore')
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode('utf-8', errors='ignore')
+
             return result.status_code, stdout, stderr
+
+        except TypeError as e:
+            # Handle startswith bytes/str mismatch error from pywinrm
+            if 'startswith' in str(e):
+                logger.warning(f"pywinrm encoding issue, retrying with encoded command")
+                try:
+                    import base64
+                    encoded = base64.b64encode(command.encode('utf-16-le')).decode('ascii')
+                    ps_cmd = f'powershell -EncodedCommand {encoded}'
+                    result = self.session.run_cmd(ps_cmd)
+
+                    stdout = result.std_out
+                    stderr = result.std_err
+                    if isinstance(stdout, bytes):
+                        stdout = stdout.decode('utf-8', errors='ignore')
+                    if isinstance(stderr, bytes):
+                        stderr = stderr.decode('utf-8', errors='ignore')
+                    return result.status_code, stdout, stderr
+                except Exception as retry_error:
+                    logger.error(f"Retry also failed: {retry_error}")
+                    return -1, "", str(e)
+            logger.error(f"Command execution failed: {e}")
+            return -1, "", str(e)
 
         except Exception as e:
             logger.error(f"Command execution failed: {e}")
