@@ -5,17 +5,28 @@
 {% block content %}
 <div class="page-header">
     <h1>Analyze Server</h1>
-    <p>Enter server connection details to start analysis</p>
+    <p>Enter server connection details or select stored credentials</p>
 </div>
 
 <div class="form-container">
     <form method="POST" class="analyze-form">
         <div class="form-section">
+            <h3>Saved Credentials</h3>
+            <div class="form-group">
+                <label for="saved_credential">Use Saved Credential</label>
+                <select id="saved_credential" name="saved_credential">
+                    <option value="">-- Enter manually --</option>
+                </select>
+                <small>Select a saved credential or enter details manually below</small>
+            </div>
+        </div>
+
+        <div class="form-section" id="manual-section">
             <h3>Connection Details</h3>
 
             <div class="form-group">
                 <label for="hostname">Hostname / IP Address <span class="required">*</span></label>
-                <input type="text" id="hostname" name="hostname" placeholder="192.168.1.100 or server.example.com" required>
+                <input type="text" id="hostname" name="hostname" placeholder="192.168.1.100 or server.example.com">
             </div>
 
             <div class="form-row">
@@ -33,12 +44,12 @@
             </div>
         </div>
 
-        <div class="form-section">
+        <div class="form-section" id="auth-section">
             <h3>Authentication</h3>
 
             <div class="form-group">
                 <label for="username">Username <span class="required">*</span></label>
-                <input type="text" id="username" name="username" placeholder="root or administrator" required>
+                <input type="text" id="username" name="username" placeholder="root or administrator">
             </div>
 
             <div class="form-group">
@@ -47,10 +58,10 @@
                 <small>Leave empty if using SSH key</small>
             </div>
 
-            <div class="form-group">
-                <label for="ssh_key">SSH Private Key (optional)</label>
-                <textarea id="ssh_key" name="ssh_key" rows="4" placeholder="Paste your SSH private key here..."></textarea>
-                <small>For Linux servers: paste the contents of your private key file</small>
+            <div class="form-group" id="ssh-key-group">
+                <label for="ssh_key">SSH Private Key Path</label>
+                <input type="text" id="ssh_key" name="ssh_key" placeholder="/home/user/.ssh/id_rsa">
+                <small>Path to SSH private key file on this server</small>
             </div>
         </div>
 
@@ -70,15 +81,61 @@
         <li>For Windows servers, ensure WinRM is configured (default port: 5985/5986)</li>
         <li>The account should have sufficient privileges to gather system information</li>
         <li>Analysis typically takes 1-3 minutes depending on system complexity</li>
+        <li>Save credentials in the <a href="{{ url_for('admin_credentials') }}">Admin area</a> for quick access</li>
     </ul>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
+// Load saved credentials
+fetch('/api/credentials')
+    .then(response => response.json())
+    .then(credentials => {
+        const select = document.getElementById('saved_credential');
+        credentials.forEach(cred => {
+            const option = document.createElement('option');
+            option.value = cred.id;
+            option.textContent = `${cred.name} (${cred.hostname})`;
+            option.dataset.hostname = cred.hostname;
+            option.dataset.osType = cred.os_type;
+            select.appendChild(option);
+        });
+    })
+    .catch(err => console.log('No saved credentials available'));
+
+// Handle saved credential selection
+document.getElementById('saved_credential').addEventListener('change', function() {
+    const manualSection = document.getElementById('manual-section');
+    const authSection = document.getElementById('auth-section');
+    const selectedOption = this.options[this.selectedIndex];
+
+    if (this.value) {
+        // Using saved credential - hide manual fields but keep hostname visible
+        manualSection.style.opacity = '0.5';
+        authSection.style.opacity = '0.5';
+
+        // Pre-fill hostname from selected credential
+        document.getElementById('hostname').value = selectedOption.dataset.hostname || '';
+        document.getElementById('os_type').value = selectedOption.dataset.osType || 'linux';
+
+        // Update port based on OS
+        if (selectedOption.dataset.osType === 'windows') {
+            document.getElementById('port').value = '5985';
+        } else {
+            document.getElementById('port').value = '22';
+        }
+    } else {
+        // Manual entry
+        manualSection.style.opacity = '1';
+        authSection.style.opacity = '1';
+    }
+});
+
+// Handle OS type change
 document.getElementById('os_type').addEventListener('change', function() {
     const port = document.getElementById('port');
-    const sshKeyGroup = document.getElementById('ssh_key').parentElement;
+    const sshKeyGroup = document.getElementById('ssh-key-group');
 
     if (this.value === 'windows') {
         port.value = '5985';
