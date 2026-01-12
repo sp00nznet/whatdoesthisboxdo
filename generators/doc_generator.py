@@ -40,6 +40,9 @@ class DocumentationGenerator:
         doc += self._generate_configuration_section()
         doc += self._generate_dependencies_section()
         doc += self._generate_recommendations()
+        doc += self._generate_scaling_section()
+        doc += self._generate_containerization_section()
+        doc += self._generate_config_improvements_section()
         doc += self._generate_footer()
 
         with open(output_path, 'w') as f:
@@ -1080,6 +1083,596 @@ Based on the analysis, here are our recommendations:
             doc += f"{i}. {rec}\n"
 
         doc += "\n"
+        return doc
+
+    def _generate_scaling_section(self) -> str:
+        """Generate scaling recommendations based on current workload"""
+        resource = self.data.get('processes', {}).get('resource_usage', {})
+        services = self.data.get('processes', {}).get('services', [])
+        processes = self.data.get('processes', {}).get('running', [])
+        metrics = self.data.get('metrics_analysis', {})
+        summary = metrics.get('metrics_summary', {})
+
+        cpu = resource.get('cpu', {})
+        memory = resource.get('memory', {})
+
+        doc = """## Scaling Recommendations
+
+### Current Capacity Analysis
+
+"""
+        cpu_count = cpu.get('count', 1)
+        total_mem_gb = round(memory.get('total', 0) / 1024 / 1024 / 1024, 1)
+        mem_percent = memory.get('percent', 0)
+        cpu_avg = summary.get('cpu_avg', 0) if summary else 0
+
+        # Determine service types for scaling advice
+        service_names = [s.get('name', '').lower() for s in services]
+        process_names = [p.get('name', '').lower() for p in processes]
+
+        is_web_server = any(w in service_names + process_names for w in ['nginx', 'apache2', 'httpd'])
+        is_database = any(d in service_names + process_names for d in ['mysql', 'postgresql', 'mongodb', 'redis'])
+        is_container_host = any(c in service_names + process_names for c in ['docker', 'containerd'])
+        is_stateless_app = any(a in service_names + process_names for a in ['node', 'python', 'java', 'go', 'ruby'])
+
+        doc += f"""| Current Specs | Value | Utilization |
+|---------------|-------|-------------|
+| CPU Cores | {cpu_count} | {cpu_avg:.1f}% avg |
+| Memory | {total_mem_gb} GB | {mem_percent}% used |
+
+"""
+
+        # Horizontal vs Vertical scaling advice
+        doc += """### Scaling Strategy
+
+"""
+        if is_web_server or is_stateless_app:
+            doc += """**Horizontal Scaling Recommended**
+
+This server runs stateless services that can scale horizontally:
+
+1. **Load Balancer Setup**
+   - Deploy a load balancer (HAProxy, nginx, or cloud LB)
+   - Add additional server instances behind the LB
+   - Use sticky sessions only if absolutely necessary
+
+2. **Auto-Scaling Considerations**
+   - Metrics to monitor: CPU usage, request latency, queue depth
+   - Scale out at 70% CPU utilization
+   - Scale in at 30% CPU utilization with cooldown period
+   - Consider time-based scaling for predictable traffic patterns
+
+3. **Session Management**
+   - Move sessions to Redis/Memcached for shared state
+   - Use JWT tokens for stateless authentication
+   - Implement health check endpoints
+
+"""
+        if is_database:
+            doc += """**Database Scaling Strategy**
+
+This server runs database services that require careful scaling:
+
+1. **Vertical Scaling (Recommended First)**
+   - Increase memory for larger cache/buffer pools
+   - Add CPU cores for query parallelization
+   - Use faster storage (NVMe SSD)
+
+2. **Read Scaling**
+   - Set up read replicas for SELECT-heavy workloads
+   - Use connection pooling (PgBouncer, ProxySQL)
+   - Implement query result caching
+
+3. **Write Scaling (Advanced)**
+   - Consider sharding for write-heavy workloads
+   - Evaluate partitioning tables by date/region
+   - Use async replication for geo-distribution
+
+"""
+        if is_container_host:
+            doc += """**Container Orchestration Scaling**
+
+Consider migrating to Kubernetes or Docker Swarm for:
+
+1. **Container Orchestration Benefits**
+   - Automatic container scheduling and placement
+   - Built-in service discovery and load balancing
+   - Rolling deployments with zero downtime
+   - Horizontal Pod Autoscaler for demand-based scaling
+
+2. **Resource Requests/Limits**
+   - Set CPU/memory requests for guaranteed resources
+   - Set limits to prevent resource hogging
+   - Use resource quotas per namespace
+
+"""
+
+        # Capacity planning
+        doc += """### Capacity Planning
+
+"""
+        if mem_percent > 70:
+            doc += f"""**Memory Pressure Detected** ({mem_percent}% used)
+
+- **Immediate:** Add {round(total_mem_gb * 0.5)} GB more RAM
+- **Consider:** Increasing to {round(total_mem_gb * 2)} GB for growth headroom
+- **Action:** Identify and optimize memory-hungry processes
+
+"""
+        elif mem_percent < 40:
+            doc += f"""**Memory Underutilized** ({mem_percent}% used)
+
+- Current allocation may be excessive
+- Could downsize to {max(1, round(total_mem_gb * 0.6))} GB to save costs
+- Monitor for 1-2 weeks to confirm usage patterns
+
+"""
+
+        if cpu_avg > 60:
+            doc += f"""**CPU Utilization High** ({cpu_avg:.1f}% average)
+
+- Add {cpu_count} more cores (total: {cpu_count * 2})
+- Or scale horizontally with additional instances
+- Profile application for optimization opportunities
+
+"""
+        elif cpu_avg < 20:
+            doc += f"""**CPU Underutilized** ({cpu_avg:.1f}% average)
+
+- Could reduce to {max(1, cpu_count // 2)} cores
+- Or consolidate workloads from other servers
+- Good candidate for containerization
+
+"""
+
+        return doc
+
+    def _generate_containerization_section(self) -> str:
+        """Generate containerization suggestions based on running services"""
+        services = self.data.get('processes', {}).get('services', [])
+        processes = self.data.get('processes', {}).get('running', [])
+        packages = self.data.get('files', {}).get('installed_packages', [])
+        history = self.data.get('history', {}).get('setup_commands', [])
+
+        service_names = [s.get('name', '').lower() for s in services if s.get('active') == 'active']
+        process_names = [p.get('name', '').lower() for p in processes]
+        package_names = [p.get('name', '').lower() for p in packages]
+
+        # Check if already containerized
+        is_containerized = any(c in service_names + process_names for c in ['docker', 'containerd', 'podman'])
+
+        doc = """## Containerization Suggestions
+
+"""
+        if is_containerized:
+            doc += """> This server already runs containers. Suggestions below are for optimizing your container setup.
+
+"""
+
+        # Identify containerizable services
+        containerizable = []
+
+        web_services = {
+            'nginx': {'base': 'nginx:alpine', 'port': 80, 'notes': 'Excellent for containerization'},
+            'apache2': {'base': 'httpd:alpine', 'port': 80, 'notes': 'Consider switching to nginx'},
+            'caddy': {'base': 'caddy:alpine', 'port': 80, 'notes': 'Great auto-HTTPS support'},
+        }
+
+        db_services = {
+            'mysql': {'base': 'mysql:8', 'port': 3306, 'notes': 'Use named volumes for data persistence'},
+            'mariadb': {'base': 'mariadb:10', 'port': 3306, 'notes': 'MySQL-compatible, lighter weight'},
+            'postgresql': {'base': 'postgres:15-alpine', 'port': 5432, 'notes': 'Production-ready image available'},
+            'mongodb': {'base': 'mongo:6', 'port': 27017, 'notes': 'Use replica sets for production'},
+            'redis': {'base': 'redis:alpine', 'port': 6379, 'notes': 'Perfect for containerization'},
+        }
+
+        app_services = {
+            'node': {'base': 'node:20-alpine', 'notes': 'Multi-stage build recommended'},
+            'python': {'base': 'python:3.11-slim', 'notes': 'Use slim or alpine variants'},
+            'java': {'base': 'eclipse-temurin:17-jre-alpine', 'notes': 'Use JRE image for runtime'},
+            'php': {'base': 'php:8.2-fpm-alpine', 'notes': 'Combine with nginx for best results'},
+        }
+
+        for name, config in web_services.items():
+            if name in service_names or name in process_names:
+                containerizable.append({
+                    'service': name,
+                    'type': 'Web Server',
+                    **config
+                })
+
+        for name, config in db_services.items():
+            if name in service_names or name in process_names:
+                containerizable.append({
+                    'service': name,
+                    'type': 'Database',
+                    **config
+                })
+
+        for name, config in app_services.items():
+            if name in process_names or any(name in p for p in package_names):
+                containerizable.append({
+                    'service': name,
+                    'type': 'Application Runtime',
+                    **config
+                })
+
+        if containerizable:
+            doc += """### Services Suitable for Containerization
+
+| Service | Type | Base Image | Notes |
+|---------|------|------------|-------|
+"""
+            for svc in containerizable:
+                base = svc.get('base', 'N/A')
+                doc += f"| {svc['service']} | {svc['type']} | `{base}` | {svc.get('notes', '')} |\n"
+            doc += "\n"
+
+        # Docker Compose suggestion
+        if len(containerizable) >= 2:
+            doc += """### Suggested Docker Compose Structure
+
+Based on detected services, here's a recommended structure:
+
+```yaml
+version: '3.8'
+
+services:
+"""
+            for svc in containerizable[:4]:
+                service_name = svc['service']
+                base_image = svc.get('base', 'alpine')
+                port = svc.get('port', 8080)
+
+                doc += f"""  {service_name}:
+    image: {base_image}
+    restart: unless-stopped
+"""
+                if port:
+                    doc += f"""    ports:
+      - "{port}:{port}"
+"""
+                if svc['type'] == 'Database':
+                    doc += f"""    volumes:
+      - {service_name}_data:/var/lib/{service_name}
+    environment:
+      - {service_name.upper()}_ROOT_PASSWORD=${{DB_PASSWORD}}
+
+"""
+                else:
+                    doc += "\n"
+
+            # Add volumes section for databases
+            db_svcs = [s for s in containerizable if s['type'] == 'Database']
+            if db_svcs:
+                doc += """volumes:
+"""
+                for svc in db_svcs:
+                    doc += f"  {svc['service']}_data:\n"
+
+            doc += "```\n\n"
+
+        # Migration steps
+        doc += """### Container Migration Steps
+
+1. **Audit Dependencies**
+   - Document all installed packages
+   - Identify configuration files to mount
+   - List environment variables needed
+
+2. **Create Dockerfile**
+   - Start with official base images
+   - Use multi-stage builds for compiled languages
+   - Keep images minimal (alpine variants)
+
+3. **Data Management**
+   - Use named volumes for persistent data
+   - Set up backup procedures for volumes
+   - Test data restore procedures
+
+4. **Network Configuration**
+   - Create dedicated Docker networks
+   - Use service names for inter-container communication
+   - Expose only necessary ports to host
+
+5. **Orchestration Decision**
+   - Single server: Docker Compose is sufficient
+   - Multiple servers: Consider Docker Swarm or Kubernetes
+   - Cloud deployment: Use managed container services (ECS, GKE, AKS)
+
+"""
+
+        # Benefits/considerations
+        doc += """### Benefits vs Trade-offs
+
+| Benefits | Trade-offs |
+|----------|------------|
+| Consistent environments | Learning curve for team |
+| Easy horizontal scaling | Additional abstraction layer |
+| Simplified deployments | Storage complexity for DBs |
+| Better resource isolation | Networking complexity |
+| Version-controlled infrastructure | Monitoring overhead |
+
+"""
+        return doc
+
+    def _generate_config_improvements_section(self) -> str:
+        """Generate configuration improvement suggestions"""
+        services = self.data.get('processes', {}).get('services', [])
+        processes = self.data.get('processes', {}).get('running', [])
+        packages = self.data.get('files', {}).get('installed_packages', [])
+        resource = self.data.get('processes', {}).get('resource_usage', {})
+        service_configs = self.data.get('files', {}).get('service_configs', {})
+        listening = self.data.get('processes', {}).get('listening_ports', [])
+        secrets = self.data.get('secrets', {})
+
+        service_names = [s.get('name', '').lower() for s in services if s.get('active') == 'active']
+        process_names = [p.get('name', '').lower() for p in processes]
+        package_names = [p.get('name', '').lower() for p in packages]
+
+        memory = resource.get('memory', {})
+        total_mem_gb = memory.get('total', 0) / 1024 / 1024 / 1024
+
+        doc = """## Configuration Improvement Suggestions
+
+"""
+        improvements = []
+
+        # Web server improvements
+        if 'nginx' in service_names or 'nginx' in process_names:
+            improvements.append({
+                'service': 'nginx',
+                'category': 'Web Server',
+                'suggestions': [
+                    'Enable gzip compression for text responses',
+                    'Configure worker_processes to match CPU cores',
+                    'Set up connection keep-alive timeouts',
+                    'Enable HTTP/2 for HTTPS connections',
+                    'Configure proper buffer sizes based on content type',
+                    'Implement rate limiting for DDoS protection'
+                ],
+                'config_snippet': '''# nginx.conf optimization
+worker_processes auto;
+worker_rlimit_nofile 65535;
+
+events {
+    worker_connections 4096;
+    multi_accept on;
+    use epoll;
+}
+
+http {
+    # Compression
+    gzip on;
+    gzip_comp_level 5;
+    gzip_types text/plain application/json application/javascript text/css;
+
+    # Timeouts
+    keepalive_timeout 65;
+    client_body_timeout 12;
+    send_timeout 10;
+
+    # Rate limiting
+    limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
+}'''
+            })
+
+        # MySQL/MariaDB improvements
+        if any(db in service_names + process_names for db in ['mysql', 'mariadb']):
+            buffer_pool_size = max(1, int(total_mem_gb * 0.7))
+            improvements.append({
+                'service': 'MySQL/MariaDB',
+                'category': 'Database',
+                'suggestions': [
+                    f'Set innodb_buffer_pool_size to {buffer_pool_size}G (70% of RAM)',
+                    'Enable slow query log for performance debugging',
+                    'Configure query cache appropriately (or disable for MySQL 8+)',
+                    'Set appropriate max_connections for your workload',
+                    'Enable binary logging for point-in-time recovery',
+                    'Use connection pooling to reduce connection overhead'
+                ],
+                'config_snippet': f'''# my.cnf optimization
+[mysqld]
+# InnoDB settings
+innodb_buffer_pool_size = {buffer_pool_size}G
+innodb_log_file_size = 256M
+innodb_flush_log_at_trx_commit = 2
+innodb_flush_method = O_DIRECT
+
+# Query performance
+slow_query_log = 1
+slow_query_log_file = /var/log/mysql/slow.log
+long_query_time = 2
+
+# Connection handling
+max_connections = 200
+wait_timeout = 300'''
+            })
+
+        # PostgreSQL improvements
+        if 'postgresql' in service_names or 'postgres' in process_names:
+            shared_buffers = max(256, int(total_mem_gb * 0.25 * 1024))  # MB
+            effective_cache = max(1, int(total_mem_gb * 0.75))
+            improvements.append({
+                'service': 'PostgreSQL',
+                'category': 'Database',
+                'suggestions': [
+                    f'Set shared_buffers to {shared_buffers}MB (25% of RAM)',
+                    f'Set effective_cache_size to {effective_cache}GB (75% of RAM)',
+                    'Enable pg_stat_statements for query analysis',
+                    'Configure appropriate work_mem for complex queries',
+                    'Set up streaming replication for HA',
+                    'Use pgBouncer for connection pooling'
+                ],
+                'config_snippet': f'''# postgresql.conf optimization
+# Memory settings
+shared_buffers = {shared_buffers}MB
+effective_cache_size = {effective_cache}GB
+work_mem = 64MB
+maintenance_work_mem = 512MB
+
+# WAL settings
+wal_buffers = 64MB
+checkpoint_completion_target = 0.9
+
+# Logging
+log_min_duration_statement = 1000
+log_checkpoints = on'''
+            })
+
+        # Redis improvements
+        if 'redis' in service_names or 'redis' in process_names:
+            max_memory = max(1, int(total_mem_gb * 0.5))
+            improvements.append({
+                'service': 'Redis',
+                'category': 'Cache/Store',
+                'suggestions': [
+                    f'Set maxmemory to {max_memory}G with eviction policy',
+                    'Enable RDB snapshots for persistence',
+                    'Consider AOF for durability requirements',
+                    'Disable KEYS command in production',
+                    'Set appropriate timeout for idle connections',
+                    'Use Redis Cluster for horizontal scaling'
+                ],
+                'config_snippet': f'''# redis.conf optimization
+maxmemory {max_memory}gb
+maxmemory-policy allkeys-lru
+
+# Persistence
+save 900 1
+save 300 10
+appendonly yes
+appendfsync everysec
+
+# Security
+rename-command FLUSHALL ""
+rename-command KEYS ""
+timeout 300'''
+            })
+
+        # Docker improvements
+        if 'docker' in service_names or 'docker' in process_names:
+            improvements.append({
+                'service': 'Docker',
+                'category': 'Container Runtime',
+                'suggestions': [
+                    'Enable live restore for daemon restarts',
+                    'Configure log rotation to prevent disk fill',
+                    'Use overlay2 storage driver',
+                    'Set default ulimits for containers',
+                    'Enable user namespaces for security',
+                    'Configure prune policies for old images'
+                ],
+                'config_snippet': '''{
+  "live-restore": true,
+  "storage-driver": "overlay2",
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  },
+  "default-ulimits": {
+    "nofile": {
+      "Name": "nofile",
+      "Hard": 65535,
+      "Soft": 65535
+    }
+  }
+}'''
+            })
+
+        # SSH improvements
+        ssh_keys = secrets.get('ssh_keys', [])
+        unencrypted_keys = [k for k in ssh_keys if not k.get('encrypted') and not k.get('is_host_key')]
+        if 'ssh' in service_names or 'sshd' in service_names:
+            suggestions = [
+                'Disable password authentication, use keys only',
+                'Disable root login via SSH',
+                'Use fail2ban for brute-force protection',
+                'Change default port (security through obscurity)',
+                'Enable two-factor authentication'
+            ]
+            if unencrypted_keys:
+                suggestions.insert(0, f'**URGENT**: Encrypt {len(unencrypted_keys)} unprotected SSH private keys')
+
+            improvements.append({
+                'service': 'SSH',
+                'category': 'Security',
+                'suggestions': suggestions,
+                'config_snippet': '''# sshd_config hardening
+PasswordAuthentication no
+PermitRootLogin prohibit-password
+PubkeyAuthentication yes
+MaxAuthTries 3
+ClientAliveInterval 300
+ClientAliveCountMax 2
+X11Forwarding no
+AllowTcpForwarding no
+PermitTunnel no'''
+            })
+
+        # Output the improvements
+        if improvements:
+            for imp in improvements:
+                doc += f"""### {imp['service']} ({imp['category']})
+
+**Recommended Improvements:**
+
+"""
+                for i, suggestion in enumerate(imp['suggestions'], 1):
+                    doc += f"{i}. {suggestion}\n"
+
+                doc += f"""
+
+<details>
+<summary>Example Configuration</summary>
+
+```
+{imp['config_snippet']}
+```
+
+</details>
+
+"""
+
+        # General system improvements
+        doc += """### General System Improvements
+
+"""
+        general_improvements = []
+
+        # Check for swap
+        swap_total = resource.get('memory', {}).get('swap_total', 0)
+        if swap_total == 0:
+            general_improvements.append("Configure swap space (recommended: equal to RAM up to 8GB)")
+
+        # Check for open file limits
+        general_improvements.append("Increase system file descriptor limits for high-traffic services")
+        general_improvements.append("Configure proper sysctl parameters for network performance")
+        general_improvements.append("Set up centralized logging (ELK, Loki, or cloud logging)")
+        general_improvements.append("Implement proper backup strategy with offsite copies")
+        general_improvements.append("Configure monitoring and alerting (Prometheus + Grafana)")
+
+        for i, imp in enumerate(general_improvements, 1):
+            doc += f"{i}. {imp}\n"
+
+        doc += """
+
+### Sysctl Tuning for High Performance
+
+```bash
+# /etc/sysctl.conf additions for network optimization
+net.core.somaxconn = 65535
+net.core.netdev_max_backlog = 65535
+net.ipv4.tcp_max_syn_backlog = 65535
+net.ipv4.ip_local_port_range = 1024 65535
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_fin_timeout = 15
+vm.swappiness = 10
+fs.file-max = 2097152
+```
+
+"""
         return doc
 
     def _generate_footer(self) -> str:
