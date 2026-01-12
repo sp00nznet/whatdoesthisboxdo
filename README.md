@@ -191,7 +191,7 @@ output/
 | `terraform-gcp/` | GCP Compute Engine configuration |
 | `terraform-azure/` | Azure VM configuration |
 | `ansible/` | Basic playbooks to configure new servers |
-| `ansible-full/` | **Comprehensive playbooks for full system recreation** |
+| `ansible-full/` | Comprehensive playbooks for full system recreation |
 
 ## Full System Recreation with Ansible
 
@@ -199,14 +199,14 @@ The tool generates comprehensive Ansible playbooks (`ansible-full/`) that can re
 
 | Component | What Gets Recreated |
 |-----------|---------------------|
-| **Users & Groups** | All user accounts, group memberships, passwords (hashed), shell configs, SSH keys |
-| **Packages** | System packages (apt/yum), pip packages, npm globals, snaps |
-| **Services** | Systemd services, custom unit files, enabled/running states |
-| **Docker** | Docker installation, containers, images, networks, volumes, compose files |
-| **Filesystem** | Mount points (fstab), NFS/CIFS mounts, directory structures |
-| **Cron Jobs** | User crontabs, /etc/cron.d files, scheduled tasks |
-| **Network** | Hostname, /etc/hosts, firewall rules (UFW), netplan configs |
-| **Configuration** | SSH config, sudoers, sysctl, system limits, environment variables |
+| Users & Groups | All user accounts, group memberships, passwords (hashed), shell configs, SSH keys |
+| Packages | System packages (apt/yum), pip packages, npm globals, snaps |
+| Services | Systemd services, custom unit files, enabled/running states |
+| Docker | Docker installation, containers, images, networks, volumes, compose files |
+| Filesystem | Mount points (fstab), NFS/CIFS mounts, directory structures |
+| Cron Jobs | User crontabs, /etc/cron.d files, scheduled tasks |
+| Network | Hostname, /etc/hosts, firewall rules (UFW), netplan configs |
+| Configuration | SSH config, sudoers, sysctl, system limits, environment variables |
 
 ### Generate Full Ansible Playbooks Only
 
