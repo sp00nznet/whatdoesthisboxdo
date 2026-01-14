@@ -2201,22 +2201,53 @@ auditpol /set /category:"Account Logon" /success:enable /failure:enable'''
 """
         general_improvements = []
 
-        # Check for swap
+        # Check for swap (Linux only)
         swap_total = resource.get('memory', {}).get('swap_total', 0)
-        if swap_total == 0:
+        if self.os_type != 'windows' and swap_total == 0:
             general_improvements.append("Configure swap space (recommended: equal to RAM up to 8GB)")
 
-        # Check for open file limits
-        general_improvements.append("Increase system file descriptor limits for high-traffic services")
-        general_improvements.append("Configure proper sysctl parameters for network performance")
-        general_improvements.append("Set up centralized logging (ELK, Loki, or cloud logging)")
-        general_improvements.append("Implement proper backup strategy with offsite copies")
-        general_improvements.append("Configure monitoring and alerting (Prometheus + Grafana)")
+        # OS-specific improvements
+        if self.os_type == 'windows':
+            general_improvements.append("Configure Windows Event Forwarding for centralized logging")
+            general_improvements.append("Implement proper backup strategy using Windows Server Backup or Veeam")
+            general_improvements.append("Configure Windows Performance Monitor alerts")
+            general_improvements.append("Review and optimize Windows Firewall rules")
+            general_improvements.append("Enable Windows Defender Application Control (WDAC) if applicable")
+        else:
+            general_improvements.append("Increase system file descriptor limits for high-traffic services")
+            general_improvements.append("Configure proper sysctl parameters for network performance")
+            general_improvements.append("Set up centralized logging (ELK, Loki, or cloud logging)")
+            general_improvements.append("Implement proper backup strategy with offsite copies")
+            general_improvements.append("Configure monitoring and alerting (Prometheus + Grafana)")
 
         for i, imp in enumerate(general_improvements, 1):
             doc += f"{i}. {imp}\n"
 
-        doc += """
+        # OS-specific tuning section
+        if self.os_type == 'windows':
+            doc += """
+
+### Windows Performance Tuning
+
+```powershell
+# Optimize Windows for server workloads
+Set-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\PriorityControl" -Name "Win32PrioritySeparation" -Value 24
+
+# Increase TCP/IP performance
+Set-NetTCPSetting -SettingName InternetCustom -AutoTuningLevelLocal Normal
+Set-NetTCPSetting -SettingName InternetCustom -ScalingHeuristics Disabled
+
+# Configure power plan for high performance
+powercfg -setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
+
+# Increase ephemeral port range
+netsh int ipv4 set dynamicport tcp start=1025 num=64510
+netsh int ipv4 set dynamicport udp start=1025 num=64510
+```
+
+"""
+        else:
+            doc += """
 
 ### Sysctl Tuning for High Performance
 
