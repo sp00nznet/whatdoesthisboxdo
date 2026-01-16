@@ -1702,12 +1702,14 @@ from database import (
 try:
     from connectors.datadog_connector import DatadogConnector, DatadogConfig
     from analyzers.datadog_analyzer import DatadogAnalyzer
+    from generators.containerization_planner import ContainerizationPlanner
     DATADOG_AVAILABLE = True
 except ImportError:
     DATADOG_AVAILABLE = False
     DatadogConnector = None
     DatadogConfig = None
     DatadogAnalyzer = None
+    ContainerizationPlanner = None
 
 
 def analyze_datadog_host(job_id, hostname, dd_credential_id=None, api_key=None, app_key=None,
@@ -2195,6 +2197,261 @@ def api_datadog_baselines(hostname):
     """Get baselines for a host."""
     baselines = get_baselines(hostname)
     return api_response(data={'hostname': hostname, 'baselines': baselines})
+
+
+# =============================================================================
+# Containerization Planner Routes
+# =============================================================================
+
+def generate_containerization_plan(job_id, hostname, dd_credential_id=None, api_key=None,
+                                    app_key=None, site='datadoghq.com', lookback_hours=24):
+    """Background task to generate containerization plan from Datadog data."""
+    try:
+        jobs[job_id]['status'] = 'running'
+        jobs[job_id]['message'] = f'Fetching Datadog data for {hostname}...'
+
+        if not DATADOG_AVAILABLE or not ContainerizationPlanner:
+            raise RuntimeError("Containerization planner not available")
+
+        # Get credentials
+        if dd_credential_id:
+            cred = get_datadog_credential(credential_id=int(dd_credential_id))
+            if not cred:
+                raise RuntimeError("Datadog credential not found")
+            api_key = cred['api_key']
+            app_key = cred['app_key']
+            site = cred.get('site', 'datadoghq.com')
+        elif not api_key or not app_key:
+            raise RuntimeError("API key and App key are required")
+
+        # Create connector and fetch data
+        config = DatadogConfig(api_key=api_key, app_key=app_key, site=site)
+        connector = DatadogConnector(config)
+
+        if not connector.test_connection():
+            raise RuntimeError("Failed to connect to Datadog API")
+
+        jobs[job_id]['message'] = f'Fetching {lookback_hours}h of metrics...'
+        datadog_data = connector.get_all_data_for_host(
+            hostname, lookback_hours=lookback_hours, include_processes=True
+        )
+
+        if not datadog_data:
+            raise RuntimeError(f"No data found for host: {hostname}")
+
+        # Run analysis
+        jobs[job_id]['message'] = 'Analyzing application patterns...'
+        analyzer = DatadogAnalyzer()
+        analysis_results = analyzer.analyze(datadog_data)
+
+        # Generate containerization plan
+        jobs[job_id]['message'] = 'Generating containerization plan...'
+        planner = ContainerizationPlanner(datadog_data, analysis_results)
+        plan = planner.analyze_and_plan()
+
+        # Save output files
+        output_dir = os.path.join('output', f'containerization-{hostname}-{datetime.now().strftime("%Y%m%d-%H%M%S")}')
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Write all configuration files
+        configs = plan.get('configurations', {})
+
+        # Dockerfiles
+        dockerfile_dir = os.path.join(output_dir, 'dockerfiles')
+        os.makedirs(dockerfile_dir, exist_ok=True)
+        for name, content in configs.get('dockerfiles', {}).items():
+            with open(os.path.join(dockerfile_dir, f'Dockerfile.{name}'), 'w') as f:
+                f.write(content)
+
+        # docker-compose
+        with open(os.path.join(output_dir, 'docker-compose.yml'), 'w') as f:
+            f.write(configs.get('docker_compose', ''))
+
+        # Kubernetes manifests
+        k8s_dir = os.path.join(output_dir, 'kubernetes')
+        os.makedirs(k8s_dir, exist_ok=True)
+        for name, content in configs.get('kubernetes', {}).items():
+            with open(os.path.join(k8s_dir, name), 'w') as f:
+                f.write(content)
+
+        # Full plan JSON
+        with open(os.path.join(output_dir, 'plan.json'), 'w') as f:
+            json.dump(plan, f, indent=2, default=str)
+
+        jobs[job_id]['status'] = 'completed'
+        jobs[job_id]['message'] = 'Containerization plan generated successfully!'
+        jobs[job_id]['result'] = {
+            'hostname': hostname,
+            'output_dir': output_dir,
+            'plan': plan
+        }
+
+    except Exception as e:
+        jobs[job_id]['status'] = 'failed'
+        jobs[job_id]['message'] = f'Error: {str(e)}'
+        jobs[job_id]['error'] = str(e)
+
+
+@app.route('/datadog/containerize', methods=['GET', 'POST'])
+def datadog_containerize():
+    """Generate containerization plan from Datadog data."""
+    if request.method == 'POST':
+        hostname = request.form.get('hostname', '').strip()
+        lookback_hours = int(request.form.get('lookback_hours', 24))
+        dd_credential_id = request.form.get('dd_credential_id', '').strip()
+        api_key = request.form.get('api_key', '').strip()
+        app_key = request.form.get('app_key', '').strip()
+        site = request.form.get('site', 'datadoghq.com').strip()
+
+        if not hostname:
+            flash('Hostname is required', 'error')
+            return render_template('datadog/containerize.html', credentials=list_datadog_credentials())
+
+        if not dd_credential_id and (not api_key or not app_key):
+            flash('Either select saved credentials or provide API key and App key', 'error')
+            return render_template('datadog/containerize.html', credentials=list_datadog_credentials())
+
+        # Create job
+        job_id = str(uuid.uuid4())
+        jobs[job_id] = {
+            'status': 'pending',
+            'message': 'Starting containerization planning...',
+            'hostname': hostname,
+            'type': 'containerization',
+            'created': datetime.now().isoformat()
+        }
+
+        thread = threading.Thread(
+            target=generate_containerization_plan,
+            args=(job_id, hostname),
+            kwargs={
+                'dd_credential_id': dd_credential_id if dd_credential_id else None,
+                'api_key': api_key if not dd_credential_id else None,
+                'app_key': app_key if not dd_credential_id else None,
+                'site': site,
+                'lookback_hours': lookback_hours
+            }
+        )
+        thread.daemon = True
+        thread.start()
+
+        return redirect(url_for('job_status', job_id=job_id))
+
+    credentials = list_datadog_credentials()
+    return render_template('datadog/containerize.html', credentials=credentials)
+
+
+@app.route('/datadog/containerize/result/<job_id>')
+def datadog_containerize_result(job_id):
+    """View containerization plan results."""
+    if job_id not in jobs:
+        flash('Job not found', 'error')
+        return redirect(url_for('datadog_dashboard'))
+
+    job = jobs[job_id]
+    if job.get('status') != 'completed':
+        return redirect(url_for('job_status', job_id=job_id))
+
+    result = job.get('result', {})
+    plan = result.get('plan', {})
+
+    return render_template('datadog/containerize_result.html', job_id=job_id, plan=plan, result=result)
+
+
+@app.route('/datadog/containerize/download/<job_id>/<file_type>')
+def datadog_containerize_download(job_id, file_type):
+    """Download containerization artifacts."""
+    if job_id not in jobs:
+        flash('Job not found', 'error')
+        return redirect(url_for('datadog_dashboard'))
+
+    job = jobs[job_id]
+    result = job.get('result', {})
+    output_dir = result.get('output_dir')
+
+    if not output_dir or not os.path.exists(output_dir):
+        flash('Output files not found', 'error')
+        return redirect(url_for('datadog_containerize_result', job_id=job_id))
+
+    if file_type == 'docker-compose':
+        return send_from_directory(output_dir, 'docker-compose.yml', as_attachment=True)
+    elif file_type == 'plan':
+        return send_from_directory(output_dir, 'plan.json', as_attachment=True)
+    elif file_type == 'all':
+        # Create zip file
+        import shutil
+        zip_path = shutil.make_archive(output_dir, 'zip', output_dir)
+        zip_name = os.path.basename(zip_path)
+        return send_from_directory(os.path.dirname(zip_path), zip_name, as_attachment=True)
+    else:
+        flash('Invalid file type', 'error')
+        return redirect(url_for('datadog_containerize_result', job_id=job_id))
+
+
+# API endpoints for containerization
+@app.route('/api/v1/datadog/containerize', methods=['POST'])
+@api_key_required
+def api_datadog_containerize():
+    """
+    Generate containerization plan from Datadog data.
+
+    POST /api/v1/datadog/containerize
+    Headers: X-API-Key: <your-api-key>
+    Body (JSON):
+        {
+            "hostname": "server.example.com",
+            "lookback_hours": 24,
+            "dd_credential_id": 1,  // OR provide api_key and app_key
+            "api_key": "...",
+            "app_key": "...",
+            "site": "datadoghq.com"
+        }
+    """
+    data = request.get_json()
+    if not data:
+        return api_response(error='Request body must be JSON', status=400)
+
+    hostname = data.get('hostname', '').strip()
+    if not hostname:
+        return api_response(error='hostname is required', status=400)
+
+    lookback_hours = int(data.get('lookback_hours', 24))
+    dd_credential_id = data.get('dd_credential_id')
+    api_key = data.get('api_key', '').strip()
+    app_key = data.get('app_key', '').strip()
+    site = data.get('site', 'datadoghq.com')
+
+    if not dd_credential_id and (not api_key or not app_key):
+        return api_response(error='dd_credential_id or api_key/app_key are required', status=400)
+
+    job_id = str(uuid.uuid4())
+    jobs[job_id] = {
+        'status': 'pending',
+        'message': 'Starting containerization planning...',
+        'hostname': hostname,
+        'type': 'containerization',
+        'created': datetime.now().isoformat()
+    }
+
+    thread = threading.Thread(
+        target=generate_containerization_plan,
+        args=(job_id, hostname),
+        kwargs={
+            'dd_credential_id': dd_credential_id,
+            'api_key': api_key if not dd_credential_id else None,
+            'app_key': app_key if not dd_credential_id else None,
+            'site': site,
+            'lookback_hours': lookback_hours
+        }
+    )
+    thread.daemon = True
+    thread.start()
+
+    return api_response(data={
+        'job_id': job_id,
+        'status': 'pending',
+        'message': 'Containerization planning started'
+    }, status=202)
 
 
 if __name__ == '__main__':

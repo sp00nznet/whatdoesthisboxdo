@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+
+{% block title %}Containerization Planner - WhatDoesThisBoxDo{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Containerization Planner</h1>
+    <p>Generate Docker and Kubernetes configurations based on Datadog metrics</p>
+</div>
+
+<div class="card">
+    <form method="POST" class="form">
+        <div class="form-section">
+            <h3>Server Information</h3>
+
+            <div class="form-group">
+                <label for="hostname">Hostname (as registered in Datadog)</label>
+                <input type="text" id="hostname" name="hostname" required
+                       placeholder="e.g., web-server-01.example.com"
+                       class="form-control">
+                <small>The hostname must match how it appears in Datadog</small>
+            </div>
+
+            <div class="form-group">
+                <label for="lookback_hours">Analysis Period</label>
+                <select id="lookback_hours" name="lookback_hours" class="form-control">
+                    <option value="1">Last 1 hour</option>
+                    <option value="6">Last 6 hours</option>
+                    <option value="24" selected>Last 24 hours (recommended)</option>
+                    <option value="48">Last 48 hours</option>
+                    <option value="168">Last 7 days</option>
+                </select>
+                <small>Longer periods provide more accurate resource sizing</small>
+            </div>
+        </div>
+
+        <div class="form-section">
+            <h3>Datadog Credentials</h3>
+
+            {% if credentials %}
+            <div class="form-group">
+                <label for="dd_credential_id">Use Saved Credentials</label>
+                <select id="dd_credential_id" name="dd_credential_id" class="form-control">
+                    <option value="">-- Enter credentials manually --</option>
+                    {% for cred in credentials %}
+                    <option value="{{ cred.id }}">{{ cred.name }} ({{ cred.site }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="divider"><span>OR</span></div>
+            {% endif %}
+
+            <div id="manual-credentials">
+                <div class="form-group">
+                    <label for="api_key">Datadog API Key</label>
+                    <input type="password" id="api_key" name="api_key"
+                           placeholder="Enter your Datadog API key"
+                           class="form-control">
+                </div>
+
+                <div class="form-group">
+                    <label for="app_key">Datadog Application Key</label>
+                    <input type="password" id="app_key" name="app_key"
+                           placeholder="Enter your Datadog Application key"
+                           class="form-control">
+                </div>
+
+                <div class="form-group">
+                    <label for="site">Datadog Site</label>
+                    <select id="site" name="site" class="form-control">
+                        <option value="datadoghq.com" selected>US1 (datadoghq.com)</option>
+                        <option value="us3.datadoghq.com">US3 (us3.datadoghq.com)</option>
+                        <option value="us5.datadoghq.com">US5 (us5.datadoghq.com)</option>
+                        <option value="datadoghq.eu">EU (datadoghq.eu)</option>
+                        <option value="ap1.datadoghq.com">AP1 (ap1.datadoghq.com)</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary btn-lg">
+                Generate Containerization Plan
+            </button>
+            <a href="{{ url_for('datadog_dashboard') }}" class="btn btn-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
+
+<div class="info-box">
+    <h4>What this tool generates:</h4>
+    <ul>
+        <li><strong>Application Profiles</strong> - Identifies applications from running processes and metrics</li>
+        <li><strong>Dockerfiles</strong> - Customized Dockerfiles for each detected application</li>
+        <li><strong>docker-compose.yml</strong> - Multi-service orchestration with resource limits</li>
+        <li><strong>Kubernetes Manifests</strong> - Deployments, Services, HPAs, and PVCs</li>
+        <li><strong>Scaling Recommendations</strong> - Horizontal vs vertical scaling strategies</li>
+        <li><strong>Resource Sizing</strong> - CPU/memory requests and limits based on actual usage</li>
+    </ul>
+</div>
+
+<div class="info-box">
+    <h4>How it works:</h4>
+    <ol>
+        <li>Fetches metrics data from Datadog for the specified period</li>
+        <li>Identifies running applications from process information</li>
+        <li>Analyzes resource usage patterns (CPU, memory, network, disk)</li>
+        <li>Calculates appropriate container resource limits with headroom</li>
+        <li>Determines optimal scaling strategy based on workload patterns</li>
+        <li>Generates production-ready configurations</li>
+    </ol>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('dd_credential_id')?.addEventListener('change', function() {
+    const manualCreds = document.getElementById('manual-credentials');
+    const inputs = manualCreds.querySelectorAll('input');
+
+    if (this.value) {
+        inputs.forEach(input => {
+            input.disabled = true;
+            input.value = '';
+        });
+        manualCreds.style.opacity = '0.5';
+    } else {
+        inputs.forEach(input => input.disabled = false);
+        manualCreds.style.opacity = '1';
+    }
+});
+</script>
+{% endblock %}
