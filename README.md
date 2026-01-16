@@ -14,6 +14,9 @@
   <img src="https://img.shields.io/badge/GCP-Compute-4285F4.svg" alt="GCP">
   <img src="https://img.shields.io/badge/Azure-VM-0078D4.svg" alt="Azure">
   <img src="https://img.shields.io/badge/vSphere-VM-607078.svg" alt="vSphere">
+  <img src="https://img.shields.io/badge/Datadog-Metrics-632CA6.svg" alt="Datadog">
+  <img src="https://img.shields.io/badge/Docker-Container-2496ED.svg" alt="Docker">
+  <img src="https://img.shields.io/badge/Kubernetes-K8s-326CE5.svg" alt="Kubernetes">
 </p>
 
 ---
@@ -594,8 +597,55 @@ cp .env.example .env
 | Harbor | Match containers to registry | `HARBOR_URL`, `HARBOR_USERNAME`, `HARBOR_PASSWORD` |
 | vCenter | VM configuration details | `VCENTER_HOST`, `VCENTER_USERNAME`, `VCENTER_PASSWORD` |
 | Proxmox | VM/container details | `PROXMOX_HOST`, `PROXMOX_USERNAME`, `PROXMOX_PASSWORD` |
+| Datadog | Metrics & monitoring data | `DATADOG_API_KEY`, `DATADOG_APP_KEY`, `DATADOG_SITE` |
 
 If credentials are not provided, the analysis will note which sources were unavailable.
+
+## Datadog Integration
+
+Analyze servers using Datadog metrics without SSH access. Pull historical data, detect patterns, and learn from your infrastructure over time.
+
+```bash
+# Via API
+curl -X POST http://localhost:5000/api/v1/datadog/analyze \
+  -H "X-API-Key: YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"hostname": "web-server-01", "lookback_hours": 24, "api_key": "...", "app_key": "..."}'
+
+# Or use the web interface at /datadog
+```
+
+**Features:**
+- Pull metrics from Datadog API (CPU, memory, disk, network, load)
+- Apply same heuristics as SSH analysis
+- **Pattern Learning** - Builds database of known patterns to identify novel issues
+- **Baseline Detection** - Stores normal behavior for anomaly detection
+- **Insight Tracking** - Track and resolve issues over time
+
+See [Datadog Integration Guide](docs/datadog-integration.md) for full documentation.
+
+## Containerization Planner
+
+Generate production-ready container configurations based on actual metrics data from Datadog.
+
+```bash
+# Via API
+curl -X POST http://localhost:5000/api/v1/datadog/containerize \
+  -H "X-API-Key: YOUR_KEY" \
+  -d '{"hostname": "web-server-01", "lookback_hours": 24, "dd_credential_id": 1}'
+
+# Or use the web interface at /datadog/containerize
+```
+
+**Generates:**
+- **Dockerfiles** - Per-application with best practices (non-root, health checks, multi-stage)
+- **docker-compose.yml** - Full orchestration with resource limits
+- **Kubernetes manifests** - Deployments, Services, HPAs, PVCs
+- **Scaling recommendations** - Horizontal vs vertical strategies with reasoning
+
+**Detects 15+ application types:** nginx, PostgreSQL, MySQL, MongoDB, Redis, RabbitMQ, Node.js, Python/Gunicorn, Java, Celery, and more.
+
+See [Containerization Planner Guide](docs/containerization-planner.md) for full documentation.
 
 ## Requirements
 
@@ -632,6 +682,8 @@ Key packages:
 | Document | Description |
 |----------|-------------|
 | [API Reference](docs/api-reference.md) | REST API v1 complete documentation |
+| [Datadog Integration](docs/datadog-integration.md) | Metrics analysis & pattern learning |
+| [Containerization Planner](docs/containerization-planner.md) | Docker & Kubernetes generation |
 | [Ansible Full Recreation](docs/ansible-full-recreation.md) | Complete system recreation guide |
 | [Configuration Guide](docs/configuration.md) | Config options |
 | [Output Reference](docs/output-reference.md) | Generated files |
