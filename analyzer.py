@@ -58,6 +58,15 @@ except ImportError:
     DatadogConnector = None
     DatadogConfig = None
     DatadogAnalyzer = None
+
+# Pattern learning support
+try:
+    from analyzers.pattern_learner import PatternLearner, learn_patterns_from_analysis
+    PATTERN_LEARNING_AVAILABLE = True
+except ImportError:
+    PATTERN_LEARNING_AVAILABLE = False
+    PatternLearner = None
+    learn_patterns_from_analysis = None
 from generators.doc_generator import DocumentationGenerator
 from generators.terraform_generator import TerraformGenerator
 from generators.ansible_generator import AnsibleGenerator
@@ -738,6 +747,21 @@ class SystemAnalyzer:
             # Generate summary
             self.generate_summary()
 
+            # Learn patterns from this analysis and save to database
+            if PATTERN_LEARNING_AVAILABLE:
+                try:
+                    hostname = self.analysis_data.get('hostname', 'unknown')
+                    learning_result = learn_patterns_from_analysis(
+                        hostname=hostname,
+                        analysis_data=self.analysis_data,
+                        source='ssh'
+                    )
+                    self.analysis_data['pattern_learning'] = learning_result
+                    if learning_result.get('novel_patterns', 0) > 0:
+                        logger.info(f"Learned {learning_result['novel_patterns']} novel patterns from analysis")
+                except Exception as e:
+                    logger.warning(f"Pattern learning failed (non-critical): {e}")
+
             logger.info("Remote analysis complete!")
             return self.analysis_data
 
@@ -776,6 +800,21 @@ class SystemAnalyzer:
 
             # Generate summary
             self.generate_summary()
+
+            # Learn patterns from this analysis and save to database
+            if PATTERN_LEARNING_AVAILABLE:
+                try:
+                    hostname = self.analysis_data.get('hostname', 'unknown')
+                    learning_result = learn_patterns_from_analysis(
+                        hostname=hostname,
+                        analysis_data=self.analysis_data,
+                        source='winrm'
+                    )
+                    self.analysis_data['pattern_learning'] = learning_result
+                    if learning_result.get('novel_patterns', 0) > 0:
+                        logger.info(f"Learned {learning_result['novel_patterns']} novel patterns from analysis")
+                except Exception as e:
+                    logger.warning(f"Pattern learning failed (non-critical): {e}")
 
             logger.info("Windows analysis complete!")
             return self.analysis_data
@@ -838,6 +877,22 @@ class SystemAnalyzer:
 
             # Generate summary
             self.generate_summary()
+
+            # Learn patterns from this analysis and save to database
+            if PATTERN_LEARNING_AVAILABLE:
+                try:
+                    hostname = self.analysis_data.get('hostname', 'unknown')
+                    source = 'winrm' if is_windows else 'ssh'  # Use same source type for consistency
+                    learning_result = learn_patterns_from_analysis(
+                        hostname=hostname,
+                        analysis_data=self.analysis_data,
+                        source=source
+                    )
+                    self.analysis_data['pattern_learning'] = learning_result
+                    if learning_result.get('novel_patterns', 0) > 0:
+                        logger.info(f"Learned {learning_result['novel_patterns']} novel patterns from analysis")
+                except Exception as e:
+                    logger.warning(f"Pattern learning failed (non-critical): {e}")
 
             logger.info("Local analysis complete!")
             return self.analysis_data

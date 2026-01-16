@@ -1,6 +1,6 @@
 # Datadog Integration Guide
 
-Analyze servers using Datadog metrics without SSH/WinRM access. This integration pulls historical data from the Datadog API, applies the same heuristics used in direct server analysis, and builds a learning database of patterns over time.
+Analyze servers using Datadog metrics without SSH/WinRM access. This integration pulls historical data from the Datadog API, applies the same heuristics used in direct server analysis, and builds a unified learning database of patterns over time.
 
 ## Overview
 
@@ -12,6 +12,22 @@ The Datadog integration provides:
 - **Baseline Detection** - Store normal behavior for anomaly detection
 - **Insight Tracking** - Track issues and their resolution over time
 - **Monitor Integration** - Check active alerts and warnings
+
+### Unified Learning Database
+
+The pattern learning database is shared across all data sources:
+
+| Source | Description |
+|--------|-------------|
+| `datadog` | Patterns learned from Datadog API metrics |
+| `ssh` | Patterns learned from SSH/Linux direct analysis |
+| `winrm` | Patterns learned from WinRM/Windows direct analysis |
+
+This unified approach allows you to:
+- **Cross-validate** metrics between Datadog and direct analysis
+- **Compare baselines** from different data sources
+- **Identify discrepancies** between monitoring and actual server state
+- **Build comprehensive profiles** of server behavior across all access methods
 
 ## Configuration
 
@@ -174,8 +190,68 @@ X-API-Key: YOUR_API_KEY
 ### Get Baselines
 
 ```bash
+# Get all baselines for a host
 GET /api/v1/datadog/baselines/{hostname}
 X-API-Key: YOUR_API_KEY
+
+# Filter by source
+GET /api/v1/datadog/baselines/{hostname}?source=ssh
+```
+
+### Cross-Source Comparison
+
+Compare patterns and baselines from different data sources:
+
+```bash
+GET /api/v1/patterns/compare/{hostname}
+X-API-Key: YOUR_API_KEY
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "hostname": "web-server-01",
+    "pattern_counts": {
+      "datadog": 12,
+      "ssh": 8,
+      "winrm": 0
+    },
+    "baseline_comparison": {
+      "memory_percent": {
+        "datadog": {"avg": 45.2, "min": 30.1, "max": 65.8},
+        "ssh": {"avg": 44.8, "min": 32.5, "max": 67.2}
+      }
+    }
+  }
+}
+```
+
+### Get All Patterns (Multi-Source)
+
+```bash
+# Get all patterns across sources
+GET /api/v1/patterns
+X-API-Key: YOUR_API_KEY
+
+# Filter by source
+GET /api/v1/patterns?source=ssh&pattern_type=resource_profile
+
+# Available filters: source, pattern_type, server_type, min_occurrences, limit
+```
+
+### Get All Insights (Multi-Source)
+
+```bash
+# Get insights across all sources
+GET /api/v1/insights
+X-API-Key: YOUR_API_KEY
+
+# Filter by source and severity
+GET /api/v1/insights?source=datadog&severity=critical
+
+# Available filters: hostname, source, severity, status, limit
 ```
 
 ### Manage Credentials
@@ -256,7 +332,7 @@ The analyzer detects server types from running processes:
 | site | string | Datadog site URL |
 | description | text | Optional description |
 
-**datadog_patterns** - Learned patterns database
+**datadog_patterns** - Learned patterns database (multi-source)
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -268,8 +344,9 @@ The analyzer detects server types from running processes:
 | first_seen | timestamp | First detection time |
 | last_seen | timestamp | Most recent detection |
 | confidence | float | 0.0 to 1.0 confidence score |
+| **source** | string | Data source: `datadog`, `ssh`, or `winrm` |
 
-**datadog_insights** - Tracked insights
+**datadog_insights** - Tracked insights (multi-source)
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -279,8 +356,9 @@ The analyzer detects server types from running processes:
 | title | string | Insight title |
 | resolution_status | string | open, resolved |
 | suggested_action | text | Recommended action |
+| **source** | string | Data source: `datadog`, `ssh`, or `winrm` |
 
-**datadog_baselines** - Normal behavior baselines
+**datadog_baselines** - Normal behavior baselines (multi-source)
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -290,8 +368,9 @@ The analyzer detects server types from running processes:
 | baseline_min | float | Minimum value |
 | baseline_max | float | Maximum value |
 | baseline_stddev | float | Standard deviation |
+| **source** | string | Data source: `datadog`, `ssh`, or `winrm` |
 
-**datadog_analysis_history** - Full analysis records
+**datadog_analysis_history** - Full analysis records (multi-source)
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -301,15 +380,27 @@ The analyzer detects server types from running processes:
 | critical_count | int | Critical issues found |
 | warning_count | int | Warnings found |
 | analysis_data | json | Full analysis results |
+| **source** | string | Data source: `datadog`, `ssh`, or `winrm` |
 
 ## Pattern Learning
 
-The system learns patterns automatically:
+The system learns patterns automatically from all data sources:
 
 1. **First Analysis** - Patterns detected are marked as "novel"
 2. **Subsequent Analyses** - If the same pattern is seen again, occurrence count increases
 3. **High Occurrence** - Patterns seen 5+ times are considered "common"
 4. **Cross-Host Learning** - Patterns from all hosts contribute to the knowledge base
+5. **Cross-Source Validation** - Same patterns from different sources (Datadog, SSH, WinRM) can be compared
+
+### Data Sources
+
+All patterns are tagged with their source for comparison:
+
+| Source | When Used |
+|--------|-----------|
+| `datadog` | Patterns learned from Datadog API analysis |
+| `ssh` | Patterns learned from SSH/Linux direct analysis |
+| `winrm` | Patterns learned from WinRM/Windows direct analysis |
 
 ### Using Patterns
 
@@ -318,6 +409,21 @@ Patterns help identify:
 - **Expected Behavior** - Common patterns are likely normal
 - **Anomalies** - Novel patterns on a server with established baselines may indicate issues
 - **Infrastructure-Wide Issues** - Same pattern appearing across multiple hosts
+- **Monitoring Discrepancies** - Compare what Datadog reports vs. what direct analysis reveals
+
+### Cross-Source Validation
+
+When both Datadog and direct analysis data exist for a host, you can compare:
+
+```bash
+# API endpoint for comparison
+GET /api/v1/patterns/compare/{hostname}
+```
+
+This is useful for:
+- Validating Datadog agent configuration
+- Detecting monitoring blind spots
+- Building confidence in alerting thresholds
 
 ## Programmatic Usage
 

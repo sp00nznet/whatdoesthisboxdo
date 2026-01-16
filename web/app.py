@@ -2195,8 +2195,105 @@ def api_datadog_history():
 @api_key_required
 def api_datadog_baselines(hostname):
     """Get baselines for a host."""
-    baselines = get_baselines(hostname)
+    source = request.args.get('source')  # Optional: filter by source
+    baselines = get_baselines(hostname, source=source)
     return api_response(data={'hostname': hostname, 'baselines': baselines})
+
+
+@app.route('/api/v1/patterns/compare/<hostname>', methods=['GET'])
+@api_key_required
+def api_patterns_compare(hostname):
+    """Compare patterns and baselines across data sources for a host.
+
+    This endpoint provides cross-source comparison data, showing:
+    - Pattern counts by source (datadog, ssh, winrm)
+    - Baseline comparisons showing same metrics from different sources
+    - Discrepancies between sources
+
+    Query Parameters:
+        - hostname: The hostname to compare data for
+    """
+    try:
+        from analyzers.pattern_learner import compare_sources
+        comparison = compare_sources(hostname)
+        return api_response(data=comparison)
+    except ImportError:
+        return api_response(error='Pattern learning module not available', status=500)
+    except Exception as e:
+        return api_response(error=str(e), status=500)
+
+
+@app.route('/api/v1/patterns', methods=['GET'])
+@api_key_required
+def api_all_patterns():
+    """Get all learned patterns with optional filtering.
+
+    Query Parameters:
+        - source: Filter by data source (datadog, ssh, winrm)
+        - pattern_type: Filter by pattern type
+        - server_type: Filter by server type
+        - min_occurrences: Minimum occurrence count (default: 1)
+        - limit: Maximum patterns to return (default: 100)
+    """
+    source = request.args.get('source')
+    pattern_type = request.args.get('pattern_type')
+    server_type = request.args.get('server_type')
+    min_occurrences = int(request.args.get('min_occurrences', 1))
+    limit = int(request.args.get('limit', 100))
+
+    patterns = get_patterns(
+        pattern_type=pattern_type,
+        server_type=server_type,
+        min_occurrences=min_occurrences,
+        limit=limit,
+        source=source
+    )
+
+    # Group by source for easier consumption
+    by_source = {}
+    for p in patterns:
+        src = p.get('source', 'datadog')
+        if src not in by_source:
+            by_source[src] = []
+        by_source[src].append(p)
+
+    return api_response(data={
+        'patterns': patterns,
+        'by_source': by_source,
+        'total_count': len(patterns)
+    })
+
+
+@app.route('/api/v1/insights', methods=['GET'])
+@api_key_required
+def api_all_insights():
+    """Get all insights with optional filtering.
+
+    Query Parameters:
+        - hostname: Filter by hostname
+        - source: Filter by data source (datadog, ssh, winrm)
+        - severity: Filter by severity (critical, warning, info)
+        - status: Filter by resolution status (open, resolved)
+        - limit: Maximum insights to return (default: 100)
+    """
+    hostname = request.args.get('hostname')
+    source = request.args.get('source')
+    severity = request.args.get('severity')
+    status = request.args.get('status')
+    limit = int(request.args.get('limit', 100))
+
+    insights = get_insights(
+        hostname=hostname,
+        severity=severity,
+        status=status,
+        limit=limit,
+        source=source
+    )
+
+    return api_response(data={
+        'insights': insights,
+        'count': len(insights)
+    })
 
 
 # =============================================================================
