@@ -1686,6 +1686,517 @@ def api_job_output_download(job_id, output_type):
     return api_download_output(output_dir, output_type)
 
 
+# =============================================================================
+# Datadog Integration Routes
+# =============================================================================
+
+# Import Datadog-related database functions
+from database import (
+    save_datadog_credential, get_datadog_credential, list_datadog_credentials,
+    delete_datadog_credential, save_pattern, get_patterns, is_novel_pattern,
+    save_insight, get_insights, resolve_insight, save_analysis_history,
+    get_analysis_history, save_baseline, get_baselines
+)
+
+# Import Datadog connector if available
+try:
+    from connectors.datadog_connector import DatadogConnector, DatadogConfig
+    from analyzers.datadog_analyzer import DatadogAnalyzer
+    DATADOG_AVAILABLE = True
+except ImportError:
+    DATADOG_AVAILABLE = False
+    DatadogConnector = None
+    DatadogConfig = None
+    DatadogAnalyzer = None
+
+
+def analyze_datadog_host(job_id, hostname, dd_credential_id=None, api_key=None, app_key=None,
+                         site='datadoghq.com', lookback_hours=24, save_to_db=True):
+    """Background task to analyze a server via Datadog API."""
+    import hashlib
+
+    try:
+        jobs[job_id]['status'] = 'running'
+        jobs[job_id]['message'] = f'Connecting to Datadog for {hostname}...'
+
+        if not DATADOG_AVAILABLE:
+            raise RuntimeError("Datadog support not available")
+
+        # Get credentials
+        if dd_credential_id:
+            cred = get_datadog_credential(credential_id=int(dd_credential_id))
+            if not cred:
+                raise RuntimeError("Datadog credential not found")
+            api_key = cred['api_key']
+            app_key = cred['app_key']
+            site = cred.get('site', 'datadoghq.com')
+        elif not api_key or not app_key:
+            raise RuntimeError("API key and App key are required")
+
+        # Create connector
+        config = DatadogConfig(api_key=api_key, app_key=app_key, site=site)
+        connector = DatadogConnector(config)
+
+        # Test connection
+        jobs[job_id]['message'] = 'Testing Datadog API connection...'
+        if not connector.test_connection():
+            raise RuntimeError("Failed to connect to Datadog API - check credentials")
+
+        # Fetch data
+        jobs[job_id]['message'] = f'Fetching {lookback_hours}h of metrics for {hostname}...'
+        datadog_data = connector.get_all_data_for_host(
+            hostname,
+            lookback_hours=lookback_hours,
+            include_processes=True
+        )
+
+        if not datadog_data or not datadog_data.get('metrics'):
+            raise RuntimeError(f"No Datadog data found for host: {hostname}")
+
+        # Run analysis
+        jobs[job_id]['message'] = 'Analyzing metrics and detecting patterns...'
+        analyzer = DatadogAnalyzer()
+        analysis_results = analyzer.analyze(datadog_data)
+
+        # Save to database if requested
+        if save_to_db:
+            jobs[job_id]['message'] = 'Saving results to database...'
+
+            # Save analysis history
+            save_analysis_history(
+                hostname=hostname,
+                health_score=analysis_results.get('health_score', 0),
+                server_types=analysis_results.get('server_types', []),
+                critical_count=analysis_results.get('summary', {}).get('critical_issues', 0),
+                warning_count=analysis_results.get('summary', {}).get('warnings', 0),
+                pattern_count=len(analysis_results.get('patterns', [])),
+                analysis_data=analysis_results
+            )
+
+            # Save patterns and check for novel ones
+            novel_patterns = []
+            for pattern in analysis_results.get('patterns', []):
+                # Create a hash for the pattern
+                pattern_str = f"{pattern['pattern_type']}:{pattern['description']}:{','.join(pattern['metrics_involved'])}"
+                pattern_hash = hashlib.sha256(pattern_str.encode()).hexdigest()[:16]
+
+                is_novel = is_novel_pattern(pattern_hash)
+                if is_novel:
+                    novel_patterns.append(pattern)
+
+                save_pattern(
+                    pattern_hash=pattern_hash,
+                    pattern_type=pattern['pattern_type'],
+                    description=pattern['description'],
+                    metrics_involved=pattern['metrics_involved'],
+                    server_type=analysis_results.get('server_types', [None])[0] if analysis_results.get('server_types') else None,
+                    confidence=pattern['confidence'],
+                    metadata=pattern.get('metadata')
+                )
+
+            # Save insights
+            for insight in analysis_results.get('insights', []):
+                insight_str = f"{hostname}:{insight['category']}:{insight['title']}"
+                insight_hash = hashlib.sha256(insight_str.encode()).hexdigest()[:16]
+
+                save_insight(
+                    hostname=hostname,
+                    insight_hash=insight_hash,
+                    category=insight['category'],
+                    severity=insight['severity'],
+                    title=insight['title'],
+                    description=insight.get('description'),
+                    metric_name=insight.get('metric_name'),
+                    metric_value=insight.get('metric_value'),
+                    threshold=insight.get('threshold'),
+                    suggested_action=insight.get('suggested_action')
+                )
+
+            # Save baselines
+            for metric_name, metric_data in datadog_data.get('metrics', {}).items():
+                if metric_data.get('values'):
+                    values = metric_data['values']
+                    avg = sum(values) / len(values)
+                    std_dev = (sum((x - avg) ** 2 for x in values) / len(values)) ** 0.5
+
+                    save_baseline(
+                        hostname=hostname,
+                        metric_name=metric_name,
+                        baseline_avg=avg,
+                        baseline_min=metric_data.get('min', min(values)),
+                        baseline_max=metric_data.get('max', max(values)),
+                        baseline_stddev=std_dev,
+                        sample_count=len(values)
+                    )
+
+            analysis_results['novel_patterns'] = novel_patterns
+
+        # Store results
+        result = {
+            'hostname': hostname,
+            'lookback_hours': lookback_hours,
+            'analysis': analysis_results,
+            'raw_data': {
+                'host_info': datadog_data.get('host_info'),
+                'tags': datadog_data.get('tags', []),
+                'metrics_summary': {
+                    name: {
+                        'avg': data.get('avg'),
+                        'min': data.get('min'),
+                        'max': data.get('max'),
+                        'sample_count': data.get('sample_count')
+                    }
+                    for name, data in datadog_data.get('metrics', {}).items()
+                },
+                'monitors': datadog_data.get('monitors', []),
+                'events': datadog_data.get('events', [])[:10]  # Limit events in response
+            }
+        }
+
+        jobs[job_id]['status'] = 'completed'
+        jobs[job_id]['message'] = 'Datadog analysis complete!'
+        jobs[job_id]['result'] = result
+
+    except Exception as e:
+        jobs[job_id]['status'] = 'failed'
+        jobs[job_id]['message'] = f'Error: {str(e)}'
+        jobs[job_id]['error'] = str(e)
+
+
+@app.route('/datadog')
+def datadog_dashboard():
+    """Datadog integration dashboard."""
+    credentials = list_datadog_credentials()
+    recent_analyses = get_analysis_history(limit=10)
+    open_insights = get_insights(status='open', limit=20)
+    patterns = get_patterns(min_occurrences=1, limit=20)
+
+    return render_template('datadog/dashboard.html',
+                          credentials=credentials,
+                          recent_analyses=recent_analyses,
+                          open_insights=open_insights,
+                          patterns=patterns,
+                          datadog_available=DATADOG_AVAILABLE)
+
+
+@app.route('/datadog/analyze', methods=['GET', 'POST'])
+def datadog_analyze():
+    """Analyze a server using Datadog data."""
+    if request.method == 'POST':
+        hostname = request.form.get('hostname', '').strip()
+        lookback_hours = int(request.form.get('lookback_hours', 24))
+        save_to_db = request.form.get('save_to_db') == '1'
+
+        # Get credentials
+        dd_credential_id = request.form.get('dd_credential_id', '').strip()
+        api_key = request.form.get('api_key', '').strip()
+        app_key = request.form.get('app_key', '').strip()
+        site = request.form.get('site', 'datadoghq.com').strip()
+
+        if not hostname:
+            flash('Hostname is required', 'error')
+            return render_template('datadog/analyze.html', credentials=list_datadog_credentials())
+
+        if not dd_credential_id and (not api_key or not app_key):
+            flash('Either select saved credentials or provide API key and App key', 'error')
+            return render_template('datadog/analyze.html', credentials=list_datadog_credentials())
+
+        # Create job
+        job_id = str(uuid.uuid4())
+        jobs[job_id] = {
+            'status': 'pending',
+            'message': 'Starting Datadog analysis...',
+            'hostname': hostname,
+            'type': 'datadog',
+            'created': datetime.now().isoformat()
+        }
+
+        # Start background thread
+        thread = threading.Thread(
+            target=analyze_datadog_host,
+            args=(job_id, hostname),
+            kwargs={
+                'dd_credential_id': dd_credential_id if dd_credential_id else None,
+                'api_key': api_key if not dd_credential_id else None,
+                'app_key': app_key if not dd_credential_id else None,
+                'site': site,
+                'lookback_hours': lookback_hours,
+                'save_to_db': save_to_db
+            }
+        )
+        thread.daemon = True
+        thread.start()
+
+        return redirect(url_for('job_status', job_id=job_id))
+
+    credentials = list_datadog_credentials()
+    return render_template('datadog/analyze.html', credentials=credentials)
+
+
+@app.route('/datadog/insights')
+def datadog_insights():
+    """View Datadog insights."""
+    hostname = request.args.get('hostname')
+    severity = request.args.get('severity')
+    status = request.args.get('status', 'open')
+
+    insights = get_insights(hostname=hostname, severity=severity, status=status, limit=100)
+    return render_template('datadog/insights.html', insights=insights)
+
+
+@app.route('/datadog/insights/<int:insight_id>/resolve', methods=['POST'])
+@admin_required
+def datadog_resolve_insight(insight_id):
+    """Resolve a Datadog insight."""
+    resolution_notes = request.form.get('resolution_notes', '')
+    if resolve_insight(insight_id, resolution_notes):
+        flash('Insight resolved successfully', 'success')
+    else:
+        flash('Failed to resolve insight', 'error')
+    return redirect(url_for('datadog_insights'))
+
+
+@app.route('/datadog/patterns')
+def datadog_patterns():
+    """View learned patterns."""
+    pattern_type = request.args.get('type')
+    server_type = request.args.get('server_type')
+    min_occurrences = int(request.args.get('min_occurrences', 1))
+
+    patterns = get_patterns(
+        pattern_type=pattern_type,
+        server_type=server_type,
+        min_occurrences=min_occurrences,
+        limit=100
+    )
+    return render_template('datadog/patterns.html', patterns=patterns)
+
+
+@app.route('/datadog/history')
+def datadog_history():
+    """View analysis history."""
+    hostname = request.args.get('hostname')
+    history = get_analysis_history(hostname=hostname, limit=50)
+    return render_template('datadog/history.html', history=history)
+
+
+# Admin routes for Datadog credentials
+@app.route('/admin/datadog')
+@admin_required
+def admin_datadog():
+    """Admin page for Datadog credentials."""
+    credentials = list_datadog_credentials()
+    return render_template('admin/datadog.html', credentials=credentials)
+
+
+@app.route('/admin/datadog/add', methods=['GET', 'POST'])
+@admin_required
+def admin_add_datadog_credential():
+    """Add a new Datadog credential."""
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        api_key = request.form.get('api_key', '').strip()
+        app_key = request.form.get('app_key', '').strip()
+        site = request.form.get('site', 'datadoghq.com').strip()
+        description = request.form.get('description', '').strip()
+
+        if not name or not api_key or not app_key:
+            flash('Name, API key, and App key are required', 'error')
+        else:
+            save_datadog_credential(name, api_key, app_key, site, description)
+            flash(f'Datadog credential "{name}" saved successfully', 'success')
+            return redirect(url_for('admin_datadog'))
+
+    return render_template('admin/datadog_form.html', credential=None)
+
+
+@app.route('/admin/datadog/<int:cred_id>/edit', methods=['GET', 'POST'])
+@admin_required
+def admin_edit_datadog_credential(cred_id):
+    """Edit a Datadog credential."""
+    credential = get_datadog_credential(credential_id=cred_id)
+    if not credential:
+        flash('Credential not found', 'error')
+        return redirect(url_for('admin_datadog'))
+
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        api_key = request.form.get('api_key', '').strip()
+        app_key = request.form.get('app_key', '').strip()
+        site = request.form.get('site', 'datadoghq.com').strip()
+        description = request.form.get('description', '').strip()
+
+        # Keep existing keys if not provided
+        if not api_key:
+            api_key = credential['api_key']
+        if not app_key:
+            app_key = credential['app_key']
+
+        if not name:
+            flash('Name is required', 'error')
+        else:
+            save_datadog_credential(name, api_key, app_key, site, description)
+            flash(f'Datadog credential "{name}" updated successfully', 'success')
+            return redirect(url_for('admin_datadog'))
+
+    return render_template('admin/datadog_form.html', credential=credential)
+
+
+@app.route('/admin/datadog/<int:cred_id>/delete', methods=['POST'])
+@admin_required
+def admin_delete_datadog_credential(cred_id):
+    """Delete a Datadog credential."""
+    if delete_datadog_credential(cred_id):
+        flash('Datadog credential deleted successfully', 'success')
+    else:
+        flash('Failed to delete credential', 'error')
+    return redirect(url_for('admin_datadog'))
+
+
+# API endpoints for Datadog
+@app.route('/api/v1/datadog/analyze', methods=['POST'])
+@api_key_required
+def api_datadog_analyze():
+    """
+    Analyze a server using Datadog data.
+
+    POST /api/v1/datadog/analyze
+    Headers: X-API-Key: <your-api-key>
+    Body (JSON):
+        {
+            "hostname": "server.example.com",
+            "lookback_hours": 24,
+            "dd_credential_id": 1,  // OR provide api_key and app_key
+            "api_key": "...",       // Datadog API key
+            "app_key": "...",       // Datadog App key
+            "site": "datadoghq.com",
+            "save_to_db": true
+        }
+    """
+    data = request.get_json()
+    if not data:
+        return api_response(error='Request body must be JSON', status=400)
+
+    hostname = data.get('hostname', '').strip()
+    if not hostname:
+        return api_response(error='hostname is required', status=400)
+
+    lookback_hours = int(data.get('lookback_hours', 24))
+    save_to_db = data.get('save_to_db', True)
+    dd_credential_id = data.get('dd_credential_id')
+    api_key = data.get('api_key', '').strip()
+    app_key = data.get('app_key', '').strip()
+    site = data.get('site', 'datadoghq.com')
+
+    if not dd_credential_id and (not api_key or not app_key):
+        return api_response(error='dd_credential_id or api_key/app_key are required', status=400)
+
+    job_id = str(uuid.uuid4())
+    jobs[job_id] = {
+        'status': 'pending',
+        'message': 'Starting Datadog analysis...',
+        'hostname': hostname,
+        'type': 'datadog',
+        'created': datetime.now().isoformat()
+    }
+
+    thread = threading.Thread(
+        target=analyze_datadog_host,
+        args=(job_id, hostname),
+        kwargs={
+            'dd_credential_id': dd_credential_id,
+            'api_key': api_key if not dd_credential_id else None,
+            'app_key': app_key if not dd_credential_id else None,
+            'site': site,
+            'lookback_hours': lookback_hours,
+            'save_to_db': save_to_db
+        }
+    )
+    thread.daemon = True
+    thread.start()
+
+    return api_response(data={
+        'job_id': job_id,
+        'status': 'pending',
+        'message': 'Datadog analysis started'
+    }, status=202)
+
+
+@app.route('/api/v1/datadog/credentials', methods=['GET', 'POST'])
+@api_key_required
+def api_datadog_credentials():
+    """List or create Datadog credentials."""
+    if request.method == 'GET':
+        credentials = list_datadog_credentials(include_secrets=False)
+        return api_response(data={'credentials': credentials, 'count': len(credentials)})
+
+    data = request.get_json()
+    if not data:
+        return api_response(error='Request body must be JSON', status=400)
+
+    name = data.get('name', '').strip()
+    api_key = data.get('api_key', '').strip()
+    app_key = data.get('app_key', '').strip()
+    site = data.get('site', 'datadoghq.com')
+    description = data.get('description', '').strip()
+
+    if not name or not api_key or not app_key:
+        return api_response(error='name, api_key, and app_key are required', status=400)
+
+    cred_id = save_datadog_credential(name, api_key, app_key, site, description)
+    return api_response(data={'id': cred_id, 'name': name, 'message': 'Credential created'}, status=201)
+
+
+@app.route('/api/v1/datadog/insights', methods=['GET'])
+@api_key_required
+def api_datadog_insights():
+    """Get Datadog insights."""
+    hostname = request.args.get('hostname')
+    severity = request.args.get('severity')
+    status = request.args.get('status')
+    limit = int(request.args.get('limit', 100))
+
+    insights = get_insights(hostname=hostname, severity=severity, status=status, limit=limit)
+    return api_response(data={'insights': insights, 'count': len(insights)})
+
+
+@app.route('/api/v1/datadog/patterns', methods=['GET'])
+@api_key_required
+def api_datadog_patterns():
+    """Get learned patterns."""
+    pattern_type = request.args.get('type')
+    server_type = request.args.get('server_type')
+    min_occurrences = int(request.args.get('min_occurrences', 1))
+    limit = int(request.args.get('limit', 100))
+
+    patterns = get_patterns(
+        pattern_type=pattern_type,
+        server_type=server_type,
+        min_occurrences=min_occurrences,
+        limit=limit
+    )
+    return api_response(data={'patterns': patterns, 'count': len(patterns)})
+
+
+@app.route('/api/v1/datadog/history', methods=['GET'])
+@api_key_required
+def api_datadog_history():
+    """Get analysis history."""
+    hostname = request.args.get('hostname')
+    limit = int(request.args.get('limit', 50))
+
+    history = get_analysis_history(hostname=hostname, limit=limit)
+    return api_response(data={'history': history, 'count': len(history)})
+
+
+@app.route('/api/v1/datadog/baselines/<hostname>', methods=['GET'])
+@api_key_required
+def api_datadog_baselines(hostname):
+    """Get baselines for a host."""
+    baselines = get_baselines(hostname)
+    return api_response(data={'hostname': hostname, 'baselines': baselines})
+
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('DEBUG', 'false').lower() == 'true'

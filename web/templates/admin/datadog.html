@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block title %}Datadog Credentials - Admin - WhatDoesThisBoxDo{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Datadog Credentials</h1>
+    <p>Manage saved Datadog API credentials</p>
+</div>
+
+<div class="actions-bar">
+    <a href="{{ url_for('admin_add_datadog_credential') }}" class="btn btn-primary">Add Credential</a>
+    <a href="{{ url_for('admin_dashboard') }}" class="btn btn-secondary">Back to Admin</a>
+</div>
+
+{% if credentials %}
+<table class="table">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Site</th>
+            <th>Description</th>
+            <th>Created</th>
+            <th>Updated</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for cred in credentials %}
+        <tr>
+            <td><strong>{{ cred.name }}</strong></td>
+            <td><code>{{ cred.site }}</code></td>
+            <td>{{ cred.description or '-' }}</td>
+            <td>{{ cred.created_at }}</td>
+            <td>{{ cred.updated_at }}</td>
+            <td>
+                <a href="{{ url_for('admin_edit_datadog_credential', cred_id=cred.id) }}" class="btn btn-sm btn-secondary">Edit</a>
+                <form action="{{ url_for('admin_delete_datadog_credential', cred_id=cred.id) }}" method="POST" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this credential?');">
+                    <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="empty-state">
+    <h3>No Datadog credentials saved</h3>
+    <p>Add a credential to save your Datadog API keys securely for reuse.</p>
+    <a href="{{ url_for('admin_add_datadog_credential') }}" class="btn btn-primary">Add Your First Credential</a>
+</div>
+{% endif %}
+
+<div class="info-box">
+    <h4>About Datadog Credentials</h4>
+    <ul>
+        <li><strong>API Key:</strong> Found in Datadog Organization Settings &gt; API Keys</li>
+        <li><strong>Application Key:</strong> Found in Datadog Organization Settings &gt; Application Keys</li>
+        <li><strong>Site:</strong> Your Datadog datacenter (US1, US3, US5, EU, or AP1)</li>
+    </ul>
+    <p>Credentials are encrypted at rest using Fernet symmetric encryption.</p>
+</div>
+{% endblock %}

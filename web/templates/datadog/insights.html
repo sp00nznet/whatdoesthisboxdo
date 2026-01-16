@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+
+{% block title %}Datadog Insights - WhatDoesThisBoxDo{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Datadog Insights</h1>
+    <p>Performance insights and recommendations from Datadog analysis</p>
+</div>
+
+<div class="card">
+    <form method="GET" class="filter-form">
+        <div class="filter-group">
+            <label for="hostname">Hostname:</label>
+            <input type="text" id="hostname" name="hostname"
+                   value="{{ request.args.get('hostname', '') }}"
+                   placeholder="Filter by hostname" class="form-control">
+        </div>
+        <div class="filter-group">
+            <label for="severity">Severity:</label>
+            <select id="severity" name="severity" class="form-control">
+                <option value="">All</option>
+                <option value="critical" {{ 'selected' if request.args.get('severity') == 'critical' }}>Critical</option>
+                <option value="warning" {{ 'selected' if request.args.get('severity') == 'warning' }}>Warning</option>
+                <option value="info" {{ 'selected' if request.args.get('severity') == 'info' }}>Info</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label for="status">Status:</label>
+            <select id="status" name="status" class="form-control">
+                <option value="open" {{ 'selected' if request.args.get('status', 'open') == 'open' }}>Open</option>
+                <option value="resolved" {{ 'selected' if request.args.get('status') == 'resolved' }}>Resolved</option>
+                <option value="">All</option>
+            </select>
+        </div>
+        <button type="submit" class="btn btn-secondary">Filter</button>
+    </form>
+</div>
+
+{% if insights %}
+<table class="table">
+    <thead>
+        <tr>
+            <th>Severity</th>
+            <th>Hostname</th>
+            <th>Title</th>
+            <th>Description</th>
+            <th>Category</th>
+            <th>Created</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for insight in insights %}
+        <tr>
+            <td>
+                <span class="badge badge-{{ 'danger' if insight.severity == 'critical' else 'warning' if insight.severity == 'warning' else 'info' }}">
+                    {{ insight.severity }}
+                </span>
+            </td>
+            <td><code>{{ insight.hostname }}</code></td>
+            <td><strong>{{ insight.title }}</strong></td>
+            <td>
+                {{ insight.description[:80] }}{% if insight.description and insight.description|length > 80 %}...{% endif %}
+                {% if insight.metric_value %}
+                <br><small>Value: {{ "%.1f"|format(insight.metric_value) }} {% if insight.threshold %}(threshold: {{ insight.threshold }}){% endif %}</small>
+                {% endif %}
+                {% if insight.suggested_action %}
+                <br><small class="text-success">{{ insight.suggested_action }}</small>
+                {% endif %}
+            </td>
+            <td>{{ insight.category }}</td>
+            <td>{{ insight.created_at }}</td>
+            <td>
+                {% if insight.resolution_status != 'resolved' %}
+                <form action="{{ url_for('datadog_resolve_insight', insight_id=insight.id) }}" method="POST" style="display:inline;">
+                    <button type="submit" class="btn btn-sm btn-success" title="Mark as resolved">Resolve</button>
+                </form>
+                {% else %}
+                <span class="badge badge-success">Resolved</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="empty-state">
+    <p>No insights found matching your criteria.</p>
+    <a href="{{ url_for('datadog_analyze') }}" class="btn btn-primary">Analyze a Server</a>
+</div>
+{% endif %}
+
+<div class="actions">
+    <a href="{{ url_for('datadog_dashboard') }}" class="btn btn-secondary">Back to Dashboard</a>
+</div>
+{% endblock %}

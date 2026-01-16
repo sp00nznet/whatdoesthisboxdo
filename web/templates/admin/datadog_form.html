@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}{{ 'Edit' if credential else 'Add' }} Datadog Credential - Admin{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>{{ 'Edit' if credential else 'Add' }} Datadog Credential</h1>
+</div>
+
+<div class="card">
+    <form method="POST" class="form">
+        <div class="form-group">
+            <label for="name">Credential Name</label>
+            <input type="text" id="name" name="name" required
+                   value="{{ credential.name if credential else '' }}"
+                   placeholder="e.g., Production, Staging"
+                   class="form-control">
+            <small>A unique name to identify this credential</small>
+        </div>
+
+        <div class="form-group">
+            <label for="api_key">Datadog API Key</label>
+            <input type="password" id="api_key" name="api_key"
+                   {{ '' if credential else 'required' }}
+                   placeholder="{{ 'Leave blank to keep current' if credential else 'Enter API key' }}"
+                   class="form-control">
+            <small>Found in Datadog Organization Settings &gt; API Keys</small>
+        </div>
+
+        <div class="form-group">
+            <label for="app_key">Datadog Application Key</label>
+            <input type="password" id="app_key" name="app_key"
+                   {{ '' if credential else 'required' }}
+                   placeholder="{{ 'Leave blank to keep current' if credential else 'Enter Application key' }}"
+                   class="form-control">
+            <small>Found in Datadog Organization Settings &gt; Application Keys</small>
+        </div>
+
+        <div class="form-group">
+            <label for="site">Datadog Site</label>
+            <select id="site" name="site" class="form-control">
+                <option value="datadoghq.com" {{ 'selected' if not credential or credential.site == 'datadoghq.com' }}>US1 - datadoghq.com</option>
+                <option value="us3.datadoghq.com" {{ 'selected' if credential and credential.site == 'us3.datadoghq.com' }}>US3 - us3.datadoghq.com</option>
+                <option value="us5.datadoghq.com" {{ 'selected' if credential and credential.site == 'us5.datadoghq.com' }}>US5 - us5.datadoghq.com</option>
+                <option value="datadoghq.eu" {{ 'selected' if credential and credential.site == 'datadoghq.eu' }}>EU - datadoghq.eu</option>
+                <option value="ap1.datadoghq.com" {{ 'selected' if credential and credential.site == 'ap1.datadoghq.com' }}>AP1 - ap1.datadoghq.com</option>
+            </select>
+            <small>Select your Datadog datacenter region</small>
+        </div>
+
+        <div class="form-group">
+            <label for="description">Description (optional)</label>
+            <textarea id="description" name="description" rows="2"
+                      placeholder="Optional description"
+                      class="form-control">{{ credential.description if credential else '' }}</textarea>
+        </div>
+
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">
+                {{ 'Update' if credential else 'Save' }} Credential
+            </button>
+            <a href="{{ url_for('admin_datadog') }}" class="btn btn-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

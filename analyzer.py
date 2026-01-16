@@ -47,6 +47,17 @@ from connectors.gitlab_connector import GitLabConnector
 from connectors.harbor_connector import HarborConnector
 from connectors.vcenter_connector import VCenterConnector
 from connectors.proxmox_connector import ProxmoxConnector
+
+# Optional Datadog support
+try:
+    from connectors.datadog_connector import DatadogConnector, DatadogConfig
+    from analyzers.datadog_analyzer import DatadogAnalyzer
+    DATADOG_AVAILABLE = True
+except ImportError:
+    DATADOG_AVAILABLE = False
+    DatadogConnector = None
+    DatadogConfig = None
+    DatadogAnalyzer = None
 from generators.doc_generator import DocumentationGenerator
 from generators.terraform_generator import TerraformGenerator
 from generators.ansible_generator import AnsibleGenerator
@@ -95,7 +106,8 @@ class SystemAnalyzer:
                 'gitlab': {'configured': False, 'connected': False, 'error': None, 'data_collected': False},
                 'harbor': {'configured': False, 'connected': False, 'error': None, 'data_collected': False},
                 'vcenter': {'configured': False, 'connected': False, 'error': None, 'data_collected': False},
-                'proxmox': {'configured': False, 'connected': False, 'error': None, 'data_collected': False}
+                'proxmox': {'configured': False, 'connected': False, 'error': None, 'data_collected': False},
+                'datadog': {'configured': False, 'connected': False, 'error': None, 'data_collected': False}
             },
             'path_repo_matches': [],  # Paths matched to GitLab repos
             'container_registry_matches': []  # Running containers matched to Harbor
@@ -122,6 +134,11 @@ class SystemAnalyzer:
                 'host': os.getenv('PROXMOX_HOST', ''),
                 'username': os.getenv('PROXMOX_USERNAME', ''),
                 'password': os.getenv('PROXMOX_PASSWORD', '')
+            },
+            'datadog': {
+                'api_key': os.getenv('DATADOG_API_KEY', ''),
+                'app_key': os.getenv('DATADOG_APP_KEY', ''),
+                'site': os.getenv('DATADOG_SITE', 'datadoghq.com')
             },
             'output_dir': 'output',
             'analyze_users': [],  # Users whose history to analyze
@@ -382,6 +399,151 @@ class SystemAnalyzer:
             logger.warning("No virtualization platform configured - set VCENTER_* or PROXMOX_* in .env")
 
         return self.analysis_data.get('virtualization', {})
+
+    def analyze_datadog(self, hostname: str = None, lookback_hours: int = 24) -> dict:
+        """
+        Analyze server data from Datadog.
+
+        Args:
+            hostname: The hostname to look up in Datadog (defaults to analyzed server's hostname)
+            lookback_hours: How many hours of metrics to analyze
+
+        Returns:
+            Dictionary containing Datadog analysis results
+        """
+        logger.info("Analyzing Datadog data...")
+        ext = self.analysis_data['external_sources']['datadog']
+
+        if not DATADOG_AVAILABLE:
+            ext['error'] = 'Datadog connector not available'
+            logger.warning("Datadog support not available - check for missing dependencies")
+            return {}
+
+        dd_config = self.config.get('datadog', {})
+        if not dd_config.get('api_key') or not dd_config.get('app_key'):
+            ext['error'] = 'Datadog API key or App key not configured in .env'
+            logger.warning("Datadog not configured - set DATADOG_API_KEY and DATADOG_APP_KEY in .env")
+            return {}
+
+        ext['configured'] = True
+
+        # Use provided hostname or fall back to analyzed server's hostname
+        target_hostname = hostname or self.analysis_data.get('hostname', '')
+        if not target_hostname:
+            ext['error'] = 'No hostname available for Datadog lookup'
+            return {}
+
+        try:
+            # Create Datadog config and connector
+            config = DatadogConfig(
+                api_key=dd_config['api_key'],
+                app_key=dd_config['app_key'],
+                site=dd_config.get('site', 'datadoghq.com')
+            )
+            connector = DatadogConnector(config)
+
+            # Test connection
+            if not connector.test_connection():
+                ext['error'] = 'Failed to connect to Datadog API'
+                logger.error("Datadog API connection failed")
+                return {}
+
+            ext['connected'] = True
+
+            # Fetch all data for the host
+            datadog_data = connector.get_all_data_for_host(
+                target_hostname,
+                lookback_hours=lookback_hours,
+                include_processes=True
+            )
+
+            if datadog_data:
+                ext['data_collected'] = True
+
+                # Run the analyzer
+                analyzer = DatadogAnalyzer()
+                analysis_results = analyzer.analyze(datadog_data)
+
+                # Store results
+                self.analysis_data['datadog'] = {
+                    'raw_data': datadog_data,
+                    'analysis': analysis_results
+                }
+
+                # Merge insights with existing analysis if applicable
+                if analysis_results.get('server_types'):
+                    # Add to summary if available
+                    if 'summary' in self.analysis_data:
+                        existing_purpose = self.analysis_data['summary'].get('server_purpose', '')
+                        dd_types = ', '.join(analysis_results['server_types'])
+                        if existing_purpose and dd_types not in existing_purpose:
+                            self.analysis_data['summary']['server_purpose'] = f"{existing_purpose} (Datadog: {dd_types})"
+
+                logger.info(f"Datadog analysis complete for {target_hostname}")
+                return self.analysis_data['datadog']
+
+        except Exception as e:
+            ext['error'] = str(e)
+            logger.error(f"Datadog analysis failed: {e}")
+
+        return {}
+
+    def run_datadog_only_analysis(
+        self,
+        hostname: str,
+        lookback_hours: int = 24,
+        datadog_config: DatadogConfig = None
+    ) -> dict:
+        """
+        Run analysis using only Datadog data (no SSH/WinRM connection needed).
+
+        Args:
+            hostname: The hostname to look up in Datadog
+            lookback_hours: How many hours of metrics to analyze
+            datadog_config: Optional DatadogConfig (otherwise uses env vars)
+
+        Returns:
+            Analysis results dictionary
+        """
+        if not DATADOG_AVAILABLE:
+            raise RuntimeError(
+                "Datadog support not available.\n"
+                "Ensure connectors/datadog_connector.py is present."
+            )
+
+        logger.info(f"Starting Datadog-only analysis for {hostname}...")
+
+        # Setup config
+        if datadog_config:
+            self.config['datadog'] = {
+                'api_key': datadog_config.api_key,
+                'app_key': datadog_config.app_key,
+                'site': datadog_config.site
+            }
+
+        # Set hostname
+        self.analysis_data['hostname'] = hostname
+        self.analysis_data['timestamp'] = datetime.now().isoformat()
+        self.analysis_data['analysis_type'] = 'datadog_only'
+
+        # Run Datadog analysis
+        result = self.analyze_datadog(hostname, lookback_hours)
+
+        if not result:
+            raise RuntimeError(f"Failed to get Datadog data for {hostname}")
+
+        # Generate summary from Datadog data
+        analysis = result.get('analysis', {})
+        self.analysis_data['summary'] = {
+            'server_purpose': ', '.join(analysis.get('server_types', ['Unknown'])),
+            'health_score': analysis.get('health_score', 0),
+            'key_insights': analysis.get('insights', []),
+            'patterns_detected': analysis.get('patterns', []),
+            'recommendations': analysis.get('recommendations', [])
+        }
+
+        logger.info("Datadog-only analysis complete!")
+        return self.analysis_data
 
     def generate_summary(self) -> dict:
         """Generate a summary of the system analysis"""
