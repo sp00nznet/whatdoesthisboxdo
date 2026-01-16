@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block title %}Analysis History - WhatDoesThisBoxDo{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Datadog Analysis History</h1>
+    <p>Historical record of all Datadog analyses</p>
+</div>
+
+<div class="card">
+    <form method="GET" class="filter-form">
+        <div class="filter-group">
+            <label for="hostname">Hostname:</label>
+            <input type="text" id="hostname" name="hostname"
+                   value="{{ request.args.get('hostname', '') }}"
+                   placeholder="Filter by hostname" class="form-control">
+        </div>
+        <button type="submit" class="btn btn-secondary">Filter</button>
+        {% if request.args.get('hostname') %}
+        <a href="{{ url_for('datadog_history') }}" class="btn btn-link">Clear Filter</a>
+        {% endif %}
+    </form>
+</div>
+
+{% if history %}
+<table class="table">
+    <thead>
+        <tr>
+            <th>Hostname</th>
+            <th>Health Score</th>
+            <th>Server Types</th>
+            <th>Issues</th>
+            <th>Patterns</th>
+            <th>Analyzed</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for entry in history %}
+        <tr>
+            <td><code>{{ entry.hostname }}</code></td>
+            <td>
+                <div class="health-score health-{{ 'good' if entry.health_score >= 80 else 'warning' if entry.health_score >= 50 else 'critical' }}">
+                    {{ entry.health_score }}%
+                </div>
+            </td>
+            <td>
+                {% if entry.server_types %}
+                {% for stype in entry.server_types %}
+                <span class="badge">{{ stype }}</span>
+                {% endfor %}
+                {% else %}
+                <span class="text-muted">-</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if entry.critical_count > 0 %}
+                <span class="badge badge-danger">{{ entry.critical_count }} critical</span>
+                {% endif %}
+                {% if entry.warning_count > 0 %}
+                <span class="badge badge-warning">{{ entry.warning_count }} warnings</span>
+                {% endif %}
+                {% if entry.critical_count == 0 and entry.warning_count == 0 %}
+                <span class="text-success">No issues</span>
+                {% endif %}
+            </td>
+            <td>{{ entry.pattern_count }}</td>
+            <td>{{ entry.created_at }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<div class="stats-summary">
+    <p>Showing {{ history|length }} analysis records</p>
+</div>
+{% else %}
+<div class="empty-state">
+    <h3>No analysis history found</h3>
+    {% if request.args.get('hostname') %}
+    <p>No analyses found for hostname "{{ request.args.get('hostname') }}".</p>
+    {% else %}
+    <p>Start by analyzing a server to build your history.</p>
+    {% endif %}
+    <a href="{{ url_for('datadog_analyze') }}" class="btn btn-primary">Analyze a Server</a>
+</div>
+{% endif %}
+
+<div class="actions">
+    <a href="{{ url_for('datadog_dashboard') }}" class="btn btn-secondary">Back to Dashboard</a>
+</div>
+{% endblock %}

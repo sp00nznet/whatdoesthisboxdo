@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+
+{% block title %}Containerization Plan - {{ plan.hostname }} - WhatDoesThisBoxDo{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Containerization Plan</h1>
+    <p>Generated for <code>{{ plan.hostname }}</code> at {{ plan.generated_at }}</p>
+</div>
+
+<div class="actions-bar">
+    <a href="{{ url_for('datadog_containerize_download', job_id=job_id, file_type='all') }}" class="btn btn-primary">
+        Download All Files (ZIP)
+    </a>
+    <a href="{{ url_for('datadog_containerize_download', job_id=job_id, file_type='docker-compose') }}" class="btn btn-secondary">
+        Download docker-compose.yml
+    </a>
+    <a href="{{ url_for('datadog_containerize_download', job_id=job_id, file_type='plan') }}" class="btn btn-secondary">
+        Download Plan JSON
+    </a>
+</div>
+
+<!-- Summary -->
+<div class="card">
+    <h2>Summary</h2>
+    {% set summary = plan.summary %}
+    <div class="summary-grid">
+        <div class="summary-item">
+            <span class="summary-value">{{ summary.total_applications }}</span>
+            <span class="summary-label">Applications</span>
+        </div>
+        <div class="summary-item">
+            <span class="summary-value">{{ summary.total_cpu_millicores }}m</span>
+            <span class="summary-label">Total CPU Request</span>
+        </div>
+        <div class="summary-item">
+            <span class="summary-value">{{ summary.total_memory_mb }}Mi</span>
+            <span class="summary-label">Total Memory Request</span>
+        </div>
+        <div class="summary-item">
+            <span class="summary-value">{{ summary.horizontal_scaling_apps|length }}</span>
+            <span class="summary-label">Horizontally Scalable</span>
+        </div>
+    </div>
+
+    {% if summary.recommendations %}
+    <div class="recommendations">
+        <h4>Recommendations</h4>
+        <ul>
+            {% for rec in summary.recommendations %}
+            <li>{{ rec }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Applications -->
+<div class="section">
+    <h2>Detected Applications</h2>
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Application</th>
+                <th>Type</th>
+                <th>CPU Usage</th>
+                <th>Memory Usage</th>
+                <th>Scaling</th>
+                <th>Resources</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for app in plan.applications %}
+            <tr>
+                <td>
+                    <strong>{{ app.name }}</strong>
+                    {% if app.ports %}
+                    <br><small>Ports: {{ app.ports|join(', ') }}</small>
+                    {% endif %}
+                </td>
+                <td><span class="badge">{{ app.app_type }}</span></td>
+                <td>
+                    Avg: {{ app.cpu_avg }}%<br>
+                    Max: {{ app.cpu_max }}%
+                </td>
+                <td>
+                    Avg: {{ app.memory_avg_mb|int }}MB<br>
+                    Max: {{ app.memory_max_mb|int }}MB
+                </td>
+                <td>
+                    {% set rec = plan.scaling_recommendations.get(app.name, {}) %}
+                    {% if rec %}
+                    <span class="badge badge-{{ 'primary' if rec.strategy == 'horizontal' else 'secondary' }}">
+                        {{ rec.strategy }}
+                    </span>
+                    <br><small>{{ rec.min_replicas }}-{{ rec.max_replicas }} replicas</small>
+                    {% endif %}
+                </td>
+                <td>
+                    <small>
+                        CPU: {{ app.resources.cpu_request_millicores }}m / {{ app.resources.cpu_limit_millicores }}m<br>
+                        Mem: {{ app.resources.memory_request_mb }}Mi / {{ app.resources.memory_limit_mb }}Mi
+                    </small>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Scaling Recommendations -->
+<div class="section">
+    <h2>Scaling Strategies</h2>
+    {% for app_name, rec in plan.scaling_recommendations.items() %}
+    <div class="card">
+        <h3>{{ app_name }}</h3>
+        <div class="scaling-details">
+            <div class="scaling-strategy">
+                <span class="badge badge-lg badge-{{ 'primary' if rec.strategy == 'horizontal' else 'secondary' }}">
+                    {{ rec.strategy|upper }} SCALING
+                </span>
+            </div>
+
+            <div class="scaling-params">
+                <p><strong>Replicas:</strong> {{ rec.min_replicas }} (min) to {{ rec.max_replicas }} (max)</p>
+                <p><strong>Target CPU:</strong> {{ rec.target_cpu_percent }}%</p>
+                <p><strong>Target Memory:</strong> {{ rec.target_memory_percent }}%</p>
+                <p><strong>Cooldown:</strong> {{ rec.cooldown_seconds }}s</p>
+            </div>
+
+            {% if rec.reasoning %}
+            <div class="scaling-reasoning">
+                <h4>Reasoning:</h4>
+                <ul>
+                    {% for reason in rec.reasoning %}
+                    <li>{{ reason }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+
+            {% if rec.warnings %}
+            <div class="scaling-warnings">
+                <h4>Warnings:</h4>
+                <ul class="warning-list">
+                    {% for warning in rec.warnings %}
+                    <li>{{ warning }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Configurations Preview -->
+<div class="section">
+    <h2>Generated Configurations</h2>
+
+    <div class="tabs">
+        <button class="tab-btn active" data-tab="docker-compose">docker-compose.yml</button>
+        {% for name in plan.configurations.dockerfiles.keys() %}
+        <button class="tab-btn" data-tab="dockerfile-{{ name }}">Dockerfile.{{ name }}</button>
+        {% endfor %}
+        <button class="tab-btn" data-tab="kubernetes">Kubernetes</button>
+    </div>
+
+    <div class="tab-content active" id="tab-docker-compose">
+        <pre><code>{{ plan.configurations.docker_compose }}</code></pre>
+    </div>
+
+    {% for name, content in plan.configurations.dockerfiles.items() %}
+    <div class="tab-content" id="tab-dockerfile-{{ name }}">
+        <pre><code>{{ content }}</code></pre>
+    </div>
+    {% endfor %}
+
+    <div class="tab-content" id="tab-kubernetes">
+        <p>Kubernetes manifests generated:</p>
+        <ul>
+            {% for name in plan.configurations.kubernetes.keys() %}
+            <li><code>{{ name }}</code></li>
+            {% endfor %}
+        </ul>
+        <p><em>Download the ZIP file to get all Kubernetes manifests.</em></p>
+
+        {% if plan.configurations.kubernetes %}
+        {% set first_manifest = plan.configurations.kubernetes.values()|list|first %}
+        <h4>Sample (namespace.yaml):</h4>
+        <pre><code>{{ plan.configurations.kubernetes.get('namespace.yaml', first_manifest) }}</code></pre>
+        {% endif %}
+    </div>
+</div>
+
+<div class="actions">
+    <a href="{{ url_for('datadog_containerize') }}" class="btn btn-primary">Plan Another Server</a>
+    <a href="{{ url_for('datadog_dashboard') }}" class="btn btn-secondary">Back to Dashboard</a>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+        // Remove active from all buttons and content
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+        // Add active to clicked button and corresponding content
+        this.classList.add('active');
+        document.getElementById('tab-' + this.dataset.tab).classList.add('active');
+    });
+});
+</script>
+{% endblock %}
+
+{% block head %}
+<style>
+.summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1rem;
+    margin: 1rem 0;
+}
+.summary-item {
+    text-align: center;
+    padding: 1rem;
+    background: #f5f5f5;
+    border-radius: 8px;
+}
+.summary-value {
+    display: block;
+    font-size: 2rem;
+    font-weight: bold;
+    color: #333;
+}
+.summary-label {
+    font-size: 0.85rem;
+    color: #666;
+}
+.scaling-details {
+    display: grid;
+    gap: 1rem;
+}
+.badge-lg {
+    font-size: 1rem;
+    padding: 0.5rem 1rem;
+}
+.warning-list li {
+    color: #856404;
+}
+.tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+.tab-btn {
+    padding: 0.5rem 1rem;
+    border: 1px solid #ddd;
+    background: #fff;
+    cursor: pointer;
+    border-radius: 4px;
+}
+.tab-btn.active {
+    background: #007bff;
+    color: #fff;
+    border-color: #007bff;
+}
+.tab-content {
+    display: none;
+}
+.tab-content.active {
+    display: block;
+}
+pre {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    padding: 1rem;
+    border-radius: 4px;
+    overflow-x: auto;
+    max-height: 500px;
+}
+</style>
+{% endblock %}

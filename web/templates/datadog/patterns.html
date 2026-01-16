@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% block title %}Learned Patterns - WhatDoesThisBoxDo{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Learned Patterns</h1>
+    <p>Patterns discovered across all Datadog analyses</p>
+</div>
+
+<div class="card">
+    <form method="GET" class="filter-form">
+        <div class="filter-group">
+            <label for="type">Pattern Type:</label>
+            <select id="type" name="type" class="form-control">
+                <option value="">All Types</option>
+                <option value="spike" {{ 'selected' if request.args.get('type') == 'spike' }}>Spike</option>
+                <option value="trend" {{ 'selected' if request.args.get('type') == 'trend' }}>Trend</option>
+                <option value="variability" {{ 'selected' if request.args.get('type') == 'variability' }}>Variability</option>
+                <option value="asymmetric_traffic" {{ 'selected' if request.args.get('type') == 'asymmetric_traffic' }}>Asymmetric Traffic</option>
+                <option value="anomaly" {{ 'selected' if request.args.get('type') == 'anomaly' }}>Anomaly</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label for="server_type">Server Type:</label>
+            <input type="text" id="server_type" name="server_type"
+                   value="{{ request.args.get('server_type', '') }}"
+                   placeholder="e.g., web_server" class="form-control">
+        </div>
+        <div class="filter-group">
+            <label for="min_occurrences">Min Occurrences:</label>
+            <input type="number" id="min_occurrences" name="min_occurrences"
+                   value="{{ request.args.get('min_occurrences', 1) }}"
+                   min="1" class="form-control" style="width: 80px;">
+        </div>
+        <button type="submit" class="btn btn-secondary">Filter</button>
+    </form>
+</div>
+
+{% if patterns %}
+<div class="info-box">
+    <p><strong>Understanding Patterns:</strong> These are behavioral patterns detected in your infrastructure over time.
+    As you analyze more servers, the system learns to recognize common patterns and identify novel (unusual) behaviors
+    that might indicate problems or opportunities for optimization.</p>
+</div>
+
+<table class="table">
+    <thead>
+        <tr>
+            <th>Pattern Type</th>
+            <th>Description</th>
+            <th>Metrics</th>
+            <th>Server Type</th>
+            <th>Occurrences</th>
+            <th>Confidence</th>
+            <th>First/Last Seen</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for pattern in patterns %}
+        <tr>
+            <td>
+                <span class="badge badge-{{ 'warning' if pattern.pattern_type == 'spike' else 'info' if pattern.pattern_type == 'trend' else 'primary' }}">
+                    {{ pattern.pattern_type }}
+                </span>
+            </td>
+            <td>
+                {{ pattern.description }}
+                {% if pattern.is_actionable and pattern.suggested_action %}
+                <br><small class="text-success">Action: {{ pattern.suggested_action }}</small>
+                {% endif %}
+            </td>
+            <td>
+                {% if pattern.metrics_involved %}
+                {% for metric in pattern.metrics_involved %}
+                <code>{{ metric }}</code>{% if not loop.last %}, {% endif %}
+                {% endfor %}
+                {% else %}
+                -
+                {% endif %}
+            </td>
+            <td>{{ pattern.server_type or '-' }}</td>
+            <td>
+                <strong>{{ pattern.occurrence_count }}</strong>
+                {% if pattern.occurrence_count >= 5 %}
+                <span class="badge badge-success" title="Common pattern">Common</span>
+                {% endif %}
+            </td>
+            <td>{{ "%.0f"|format(pattern.confidence * 100) }}%</td>
+            <td>
+                <small>
+                    First: {{ pattern.first_seen }}<br>
+                    Last: {{ pattern.last_seen }}
+                </small>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<div class="stats-summary">
+    <p>Showing {{ patterns|length }} patterns</p>
+</div>
+{% else %}
+<div class="empty-state">
+    <h3>No patterns found</h3>
+    <p>Patterns are automatically learned during Datadog analysis. Try adjusting your filters or analyze more servers.</p>
+    <a href="{{ url_for('datadog_analyze') }}" class="btn btn-primary">Analyze a Server</a>
+</div>
+{% endif %}
+
+<div class="actions">
+    <a href="{{ url_for('datadog_dashboard') }}" class="btn btn-secondary">Back to Dashboard</a>
+</div>
+{% endblock %}
