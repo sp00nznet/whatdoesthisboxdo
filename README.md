@@ -618,7 +618,8 @@ curl -X POST http://localhost:5000/api/v1/datadog/analyze \
 **Features:**
 - Pull metrics from Datadog API (CPU, memory, disk, network, load)
 - Apply same heuristics as SSH analysis
-- **Pattern Learning** - Builds database of known patterns to identify novel issues
+- **Unified Pattern Learning** - Builds database of patterns from all sources (Datadog, SSH, WinRM)
+- **Cross-Source Validation** - Compare baselines between monitoring and direct analysis
 - **Baseline Detection** - Stores normal behavior for anomaly detection
 - **Insight Tracking** - Track and resolve issues over time
 

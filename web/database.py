@@ -664,7 +664,7 @@ def init_datadog_tables():
                 )
             ''')
 
-            # Novel patterns database - stores learned patterns
+            # Novel patterns database - stores learned patterns from all sources
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS datadog_patterns (
                     id SERIAL PRIMARY KEY,
@@ -680,11 +680,20 @@ def init_datadog_tables():
                     metadata TEXT,
                     is_actionable BOOLEAN DEFAULT FALSE,
                     suggested_action TEXT,
+                    source VARCHAR(50) DEFAULT 'datadog',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            # Add source column if it doesn't exist (migration for existing DBs)
+            cursor.execute('''
+                DO $$
+                BEGIN
+                    ALTER TABLE datadog_patterns ADD COLUMN IF NOT EXISTS source VARCHAR(50) DEFAULT 'datadog';
+                EXCEPTION WHEN duplicate_column THEN NULL;
+                END $$;
+            ''')
 
-            # Insights history - track insights over time
+            # Insights history - track insights over time from all sources
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS datadog_insights (
                     id SERIAL PRIMARY KEY,
@@ -700,12 +709,21 @@ def init_datadog_tables():
                     suggested_action TEXT,
                     resolution_status VARCHAR(50) DEFAULT 'open',
                     resolution_notes TEXT,
+                    source VARCHAR(50) DEFAULT 'datadog',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     resolved_at TIMESTAMP
                 )
             ''')
+            # Add source column if it doesn't exist (migration for existing DBs)
+            cursor.execute('''
+                DO $$
+                BEGIN
+                    ALTER TABLE datadog_insights ADD COLUMN IF NOT EXISTS source VARCHAR(50) DEFAULT 'datadog';
+                EXCEPTION WHEN duplicate_column THEN NULL;
+                END $$;
+            ''')
 
-            # Analysis history - store past analyses
+            # Analysis history - store past analyses from all sources
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS datadog_analysis_history (
                     id SERIAL PRIMARY KEY,
@@ -716,11 +734,20 @@ def init_datadog_tables():
                     warning_count INTEGER DEFAULT 0,
                     pattern_count INTEGER DEFAULT 0,
                     analysis_data TEXT,
+                    source VARCHAR(50) DEFAULT 'datadog',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            # Add source column if it doesn't exist (migration for existing DBs)
+            cursor.execute('''
+                DO $$
+                BEGIN
+                    ALTER TABLE datadog_analysis_history ADD COLUMN IF NOT EXISTS source VARCHAR(50) DEFAULT 'datadog';
+                EXCEPTION WHEN duplicate_column THEN NULL;
+                END $$;
+            ''')
 
-            # Baseline metrics - store normal behavior baselines
+            # Baseline metrics - store normal behavior baselines from all sources
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS datadog_baselines (
                     id SERIAL PRIMARY KEY,
@@ -733,10 +760,19 @@ def init_datadog_tables():
                     sample_count INTEGER,
                     period_start TIMESTAMP,
                     period_end TIMESTAMP,
+                    source VARCHAR(50) DEFAULT 'datadog',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(hostname, metric_name)
+                    UNIQUE(hostname, metric_name, source)
                 )
+            ''')
+            # Add source column if it doesn't exist (migration for existing DBs)
+            cursor.execute('''
+                DO $$
+                BEGIN
+                    ALTER TABLE datadog_baselines ADD COLUMN IF NOT EXISTS source VARCHAR(50) DEFAULT 'datadog';
+                EXCEPTION WHEN duplicate_column THEN NULL;
+                END $$;
             ''')
 
         else:
@@ -770,9 +806,15 @@ def init_datadog_tables():
                     metadata TEXT,
                     is_actionable INTEGER DEFAULT 0,
                     suggested_action TEXT,
+                    source TEXT DEFAULT 'datadog',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            # Add source column if it doesn't exist (migration for existing DBs)
+            try:
+                cursor.execute('ALTER TABLE datadog_patterns ADD COLUMN source TEXT DEFAULT "datadog"')
+            except:
+                pass  # Column already exists
 
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS datadog_insights (
@@ -789,10 +831,16 @@ def init_datadog_tables():
                     suggested_action TEXT,
                     resolution_status TEXT DEFAULT 'open',
                     resolution_notes TEXT,
+                    source TEXT DEFAULT 'datadog',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     resolved_at TIMESTAMP
                 )
             ''')
+            # Add source column if it doesn't exist (migration for existing DBs)
+            try:
+                cursor.execute('ALTER TABLE datadog_insights ADD COLUMN source TEXT DEFAULT "datadog"')
+            except:
+                pass  # Column already exists
 
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS datadog_analysis_history (
@@ -804,9 +852,15 @@ def init_datadog_tables():
                     warning_count INTEGER DEFAULT 0,
                     pattern_count INTEGER DEFAULT 0,
                     analysis_data TEXT,
+                    source TEXT DEFAULT 'datadog',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            # Add source column if it doesn't exist (migration for existing DBs)
+            try:
+                cursor.execute('ALTER TABLE datadog_analysis_history ADD COLUMN source TEXT DEFAULT "datadog"')
+            except:
+                pass  # Column already exists
 
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS datadog_baselines (
@@ -820,11 +874,17 @@ def init_datadog_tables():
                     sample_count INTEGER,
                     period_start TIMESTAMP,
                     period_end TIMESTAMP,
+                    source TEXT DEFAULT 'datadog',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(hostname, metric_name)
+                    UNIQUE(hostname, metric_name, source)
                 )
             ''')
+            # Add source column if it doesn't exist (migration for existing DBs)
+            try:
+                cursor.execute('ALTER TABLE datadog_baselines ADD COLUMN source TEXT DEFAULT "datadog"')
+            except:
+                pass  # Column already exists
 
         conn.commit()
 
@@ -978,14 +1038,15 @@ def delete_datadog_credential(credential_id: int) -> bool:
 
 
 # =============================================================================
-# Datadog Pattern Functions
+# Pattern Learning Functions (Multi-Source)
 # =============================================================================
 
 def save_pattern(pattern_hash: str, pattern_type: str, description: str,
                  metrics_involved: List[str] = None, server_type: str = None,
                  confidence: float = 1.0, metadata: Dict = None,
-                 is_actionable: bool = False, suggested_action: str = None) -> int:
-    """Save or update a learned pattern."""
+                 is_actionable: bool = False, suggested_action: str = None,
+                 source: str = 'datadog') -> int:
+    """Save or update a learned pattern from any source (datadog, ssh, winrm)."""
     import json
 
     metrics_str = json.dumps(metrics_involved) if metrics_involved else None
@@ -998,15 +1059,15 @@ def save_pattern(pattern_hash: str, pattern_type: str, description: str,
             cursor.execute('''
                 INSERT INTO datadog_patterns
                     (pattern_hash, pattern_type, description, metrics_involved, server_type,
-                     confidence, metadata, is_actionable, suggested_action)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     confidence, metadata, is_actionable, suggested_action, source)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(pattern_hash) DO UPDATE SET
                     occurrence_count = datadog_patterns.occurrence_count + 1,
                     last_seen = CURRENT_TIMESTAMP,
                     confidence = EXCLUDED.confidence
                 RETURNING id
             ''', (pattern_hash, pattern_type, description, metrics_str, server_type,
-                  confidence, metadata_str, is_actionable, suggested_action))
+                  confidence, metadata_str, is_actionable, suggested_action, source))
             result = cursor.fetchone()
             conn.commit()
             return result[0] if result else 0
@@ -1029,17 +1090,18 @@ def save_pattern(pattern_hash: str, pattern_type: str, description: str,
                 cursor.execute('''
                     INSERT INTO datadog_patterns
                         (pattern_hash, pattern_type, description, metrics_involved, server_type,
-                         confidence, metadata, is_actionable, suggested_action)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         confidence, metadata, is_actionable, suggested_action, source)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (pattern_hash, pattern_type, description, metrics_str, server_type,
-                      confidence, metadata_str, 1 if is_actionable else 0, suggested_action))
+                      confidence, metadata_str, 1 if is_actionable else 0, suggested_action, source))
                 conn.commit()
                 return cursor.lastrowid
 
 
 def get_patterns(pattern_type: str = None, server_type: str = None,
-                 min_occurrences: int = 1, limit: int = 100) -> List[Dict[str, Any]]:
-    """Get learned patterns with optional filtering."""
+                 min_occurrences: int = 1, limit: int = 100,
+                 source: str = None) -> List[Dict[str, Any]]:
+    """Get learned patterns with optional filtering by type, server, and source."""
     import json
 
     with get_db_connection() as conn:
@@ -1053,6 +1115,9 @@ def get_patterns(pattern_type: str = None, server_type: str = None,
             if server_type:
                 query += ' AND server_type = %s'
                 params.append(server_type)
+            if source:
+                query += ' AND source = %s'
+                params.append(source)
             query += ' ORDER BY occurrence_count DESC LIMIT %s'
             params.append(limit)
             cursor.execute(query, params)
@@ -1066,6 +1131,9 @@ def get_patterns(pattern_type: str = None, server_type: str = None,
             if server_type:
                 query += ' AND server_type = ?'
                 params.append(server_type)
+            if source:
+                query += ' AND source = ?'
+                params.append(source)
             query += ' ORDER BY occurrence_count DESC LIMIT ?'
             params.append(limit)
             cursor.execute(query, params)
@@ -1090,7 +1158,8 @@ def get_patterns(pattern_type: str = None, server_type: str = None,
                 'confidence': row['confidence'],
                 'metadata': row['metadata'],
                 'is_actionable': bool(row['is_actionable']),
-                'suggested_action': row['suggested_action']
+                'suggested_action': row['suggested_action'],
+                'source': row['source'] if 'source' in row.keys() else 'datadog'
             }
 
         # Parse JSON fields
@@ -1122,14 +1191,14 @@ def is_novel_pattern(pattern_hash: str) -> bool:
 
 
 # =============================================================================
-# Datadog Insight Functions
+# Insight Functions (Multi-Source)
 # =============================================================================
 
 def save_insight(hostname: str, insight_hash: str, category: str, severity: str,
                  title: str, description: str = None, metric_name: str = None,
                  metric_value: float = None, threshold: float = None,
-                 suggested_action: str = None) -> int:
-    """Save an insight to the database."""
+                 suggested_action: str = None, source: str = 'datadog') -> int:
+    """Save an insight to the database from any source (datadog, ssh, winrm)."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
 
@@ -1137,11 +1206,11 @@ def save_insight(hostname: str, insight_hash: str, category: str, severity: str,
             cursor.execute('''
                 INSERT INTO datadog_insights
                     (hostname, insight_hash, category, severity, title, description,
-                     metric_name, metric_value, threshold, suggested_action)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     metric_name, metric_value, threshold, suggested_action, source)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
             ''', (hostname, insight_hash, category, severity, title, description,
-                  metric_name, metric_value, threshold, suggested_action))
+                  metric_name, metric_value, threshold, suggested_action, source))
             result = cursor.fetchone()
             conn.commit()
             return result[0] if result else 0
@@ -1149,17 +1218,18 @@ def save_insight(hostname: str, insight_hash: str, category: str, severity: str,
             cursor.execute('''
                 INSERT INTO datadog_insights
                     (hostname, insight_hash, category, severity, title, description,
-                     metric_name, metric_value, threshold, suggested_action)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     metric_name, metric_value, threshold, suggested_action, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (hostname, insight_hash, category, severity, title, description,
-                  metric_name, metric_value, threshold, suggested_action))
+                  metric_name, metric_value, threshold, suggested_action, source))
             conn.commit()
             return cursor.lastrowid
 
 
 def get_insights(hostname: str = None, severity: str = None,
-                 status: str = None, limit: int = 100) -> List[Dict[str, Any]]:
-    """Get insights with optional filtering."""
+                 status: str = None, limit: int = 100,
+                 source: str = None) -> List[Dict[str, Any]]:
+    """Get insights with optional filtering by hostname, severity, status, and source."""
     with get_db_connection() as conn:
         if USE_POSTGRES:
             cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -1174,6 +1244,9 @@ def get_insights(hostname: str = None, severity: str = None,
             if status:
                 query += ' AND resolution_status = %s'
                 params.append(status)
+            if source:
+                query += ' AND source = %s'
+                params.append(source)
             query += ' ORDER BY created_at DESC LIMIT %s'
             params.append(limit)
             cursor.execute(query, params)
@@ -1190,6 +1263,9 @@ def get_insights(hostname: str = None, severity: str = None,
             if status:
                 query += ' AND resolution_status = ?'
                 params.append(status)
+            if source:
+                query += ' AND source = ?'
+                params.append(source)
             query += ' ORDER BY created_at DESC LIMIT ?'
             params.append(limit)
             cursor.execute(query, params)
@@ -1215,6 +1291,7 @@ def get_insights(hostname: str = None, severity: str = None,
                 'suggested_action': row['suggested_action'],
                 'resolution_status': row['resolution_status'],
                 'resolution_notes': row['resolution_notes'],
+                'source': row['source'] if 'source' in row.keys() else 'datadog',
                 'created_at': row['created_at'],
                 'resolved_at': row['resolved_at']
             })
@@ -1243,13 +1320,13 @@ def resolve_insight(insight_id: int, resolution_notes: str = None) -> bool:
 
 
 # =============================================================================
-# Datadog Analysis History Functions
+# Analysis History Functions (Multi-Source)
 # =============================================================================
 
 def save_analysis_history(hostname: str, health_score: int, server_types: List[str],
                           critical_count: int, warning_count: int, pattern_count: int,
-                          analysis_data: Dict = None) -> int:
-    """Save analysis results to history."""
+                          analysis_data: Dict = None, source: str = 'datadog') -> int:
+    """Save analysis results to history from any source (datadog, ssh, winrm)."""
     import json
 
     server_types_str = json.dumps(server_types) if server_types else None
@@ -1262,11 +1339,11 @@ def save_analysis_history(hostname: str, health_score: int, server_types: List[s
             cursor.execute('''
                 INSERT INTO datadog_analysis_history
                     (hostname, health_score, server_types, critical_count, warning_count,
-                     pattern_count, analysis_data)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                     pattern_count, analysis_data, source)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
             ''', (hostname, health_score, server_types_str, critical_count, warning_count,
-                  pattern_count, analysis_data_str))
+                  pattern_count, analysis_data_str, source))
             result = cursor.fetchone()
             conn.commit()
             return result[0] if result else 0
@@ -1274,43 +1351,46 @@ def save_analysis_history(hostname: str, health_score: int, server_types: List[s
             cursor.execute('''
                 INSERT INTO datadog_analysis_history
                     (hostname, health_score, server_types, critical_count, warning_count,
-                     pattern_count, analysis_data)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                     pattern_count, analysis_data, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ''', (hostname, health_score, server_types_str, critical_count, warning_count,
-                  pattern_count, analysis_data_str))
+                  pattern_count, analysis_data_str, source))
             conn.commit()
             return cursor.lastrowid
 
 
-def get_analysis_history(hostname: str = None, limit: int = 50) -> List[Dict[str, Any]]:
-    """Get analysis history for a host or all hosts."""
+def get_analysis_history(hostname: str = None, limit: int = 50,
+                         source: str = None) -> List[Dict[str, Any]]:
+    """Get analysis history for a host or all hosts, optionally filtered by source."""
     import json
 
     with get_db_connection() as conn:
         if USE_POSTGRES:
             cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            query = 'SELECT * FROM datadog_analysis_history WHERE 1=1'
+            params = []
             if hostname:
-                cursor.execute('''
-                    SELECT * FROM datadog_analysis_history
-                    WHERE hostname = %s ORDER BY created_at DESC LIMIT %s
-                ''', (hostname, limit))
-            else:
-                cursor.execute('''
-                    SELECT * FROM datadog_analysis_history
-                    ORDER BY created_at DESC LIMIT %s
-                ''', (limit,))
+                query += ' AND hostname = %s'
+                params.append(hostname)
+            if source:
+                query += ' AND source = %s'
+                params.append(source)
+            query += ' ORDER BY created_at DESC LIMIT %s'
+            params.append(limit)
+            cursor.execute(query, params)
         else:
             cursor = conn.cursor()
+            query = 'SELECT * FROM datadog_analysis_history WHERE 1=1'
+            params = []
             if hostname:
-                cursor.execute('''
-                    SELECT * FROM datadog_analysis_history
-                    WHERE hostname = ? ORDER BY created_at DESC LIMIT ?
-                ''', (hostname, limit))
-            else:
-                cursor.execute('''
-                    SELECT * FROM datadog_analysis_history
-                    ORDER BY created_at DESC LIMIT ?
-                ''', (limit,))
+                query += ' AND hostname = ?'
+                params.append(hostname)
+            if source:
+                query += ' AND source = ?'
+                params.append(source)
+            query += ' ORDER BY created_at DESC LIMIT ?'
+            params.append(limit)
+            cursor.execute(query, params)
 
         rows = cursor.fetchall()
 
@@ -1328,6 +1408,7 @@ def get_analysis_history(hostname: str = None, limit: int = 50) -> List[Dict[str
                 'warning_count': row['warning_count'],
                 'pattern_count': row['pattern_count'],
                 'analysis_data': row['analysis_data'],
+                'source': row['source'] if 'source' in row.keys() else 'datadog',
                 'created_at': row['created_at']
             }
 
@@ -1349,14 +1430,14 @@ def get_analysis_history(hostname: str = None, limit: int = 50) -> List[Dict[str
 
 
 # =============================================================================
-# Datadog Baseline Functions
+# Baseline Functions (Multi-Source)
 # =============================================================================
 
 def save_baseline(hostname: str, metric_name: str, baseline_avg: float,
                   baseline_min: float, baseline_max: float, baseline_stddev: float,
                   sample_count: int, period_start: datetime = None,
-                  period_end: datetime = None) -> int:
-    """Save or update a metric baseline."""
+                  period_end: datetime = None, source: str = 'datadog') -> int:
+    """Save or update a metric baseline from any source (datadog, ssh, winrm)."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
 
@@ -1364,9 +1445,9 @@ def save_baseline(hostname: str, metric_name: str, baseline_avg: float,
             cursor.execute('''
                 INSERT INTO datadog_baselines
                     (hostname, metric_name, baseline_avg, baseline_min, baseline_max,
-                     baseline_stddev, sample_count, period_start, period_end)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT(hostname, metric_name) DO UPDATE SET
+                     baseline_stddev, sample_count, period_start, period_end, source)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT(hostname, metric_name, source) DO UPDATE SET
                     baseline_avg = EXCLUDED.baseline_avg,
                     baseline_min = EXCLUDED.baseline_min,
                     baseline_max = EXCLUDED.baseline_max,
@@ -1377,15 +1458,15 @@ def save_baseline(hostname: str, metric_name: str, baseline_avg: float,
                     updated_at = CURRENT_TIMESTAMP
                 RETURNING id
             ''', (hostname, metric_name, baseline_avg, baseline_min, baseline_max,
-                  baseline_stddev, sample_count, period_start, period_end))
+                  baseline_stddev, sample_count, period_start, period_end, source))
             result = cursor.fetchone()
             conn.commit()
             return result[0] if result else 0
         else:
             # Check if exists
             cursor.execute('''
-                SELECT id FROM datadog_baselines WHERE hostname = ? AND metric_name = ?
-            ''', (hostname, metric_name))
+                SELECT id FROM datadog_baselines WHERE hostname = ? AND metric_name = ? AND source = ?
+            ''', (hostname, metric_name, source))
             existing = cursor.fetchone()
 
             if existing:
@@ -1394,32 +1475,43 @@ def save_baseline(hostname: str, metric_name: str, baseline_avg: float,
                         baseline_avg = ?, baseline_min = ?, baseline_max = ?,
                         baseline_stddev = ?, sample_count = ?, period_start = ?,
                         period_end = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE hostname = ? AND metric_name = ?
+                    WHERE hostname = ? AND metric_name = ? AND source = ?
                 ''', (baseline_avg, baseline_min, baseline_max, baseline_stddev,
-                      sample_count, period_start, period_end, hostname, metric_name))
+                      sample_count, period_start, period_end, hostname, metric_name, source))
                 conn.commit()
                 return existing['id']
             else:
                 cursor.execute('''
                     INSERT INTO datadog_baselines
                         (hostname, metric_name, baseline_avg, baseline_min, baseline_max,
-                         baseline_stddev, sample_count, period_start, period_end)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         baseline_stddev, sample_count, period_start, period_end, source)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (hostname, metric_name, baseline_avg, baseline_min, baseline_max,
-                      baseline_stddev, sample_count, period_start, period_end))
+                      baseline_stddev, sample_count, period_start, period_end, source))
                 conn.commit()
                 return cursor.lastrowid
 
 
-def get_baselines(hostname: str) -> Dict[str, Dict[str, Any]]:
-    """Get all baselines for a host as a dictionary keyed by metric name."""
+def get_baselines(hostname: str, source: str = None) -> Dict[str, Dict[str, Any]]:
+    """Get all baselines for a host as a dictionary keyed by metric name.
+
+    Args:
+        hostname: The hostname to get baselines for
+        source: Optional source filter (datadog, ssh, winrm). If None, returns all sources.
+    """
     with get_db_connection() as conn:
         if USE_POSTGRES:
             cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-            cursor.execute('SELECT * FROM datadog_baselines WHERE hostname = %s', (hostname,))
+            if source:
+                cursor.execute('SELECT * FROM datadog_baselines WHERE hostname = %s AND source = %s', (hostname, source))
+            else:
+                cursor.execute('SELECT * FROM datadog_baselines WHERE hostname = %s', (hostname,))
         else:
             cursor = conn.cursor()
-            cursor.execute('SELECT * FROM datadog_baselines WHERE hostname = ?', (hostname,))
+            if source:
+                cursor.execute('SELECT * FROM datadog_baselines WHERE hostname = ? AND source = ?', (hostname, source))
+            else:
+                cursor.execute('SELECT * FROM datadog_baselines WHERE hostname = ?', (hostname,))
 
         rows = cursor.fetchall()
 
@@ -1439,12 +1531,62 @@ def get_baselines(hostname: str) -> Dict[str, Dict[str, Any]]:
                 'sample_count': row['sample_count'],
                 'period_start': row['period_start'],
                 'period_end': row['period_end'],
+                'source': row['source'] if 'source' in row.keys() else 'datadog',
                 'created_at': row['created_at'],
                 'updated_at': row['updated_at']
             }
-        baselines[baseline['metric_name']] = baseline
+        # Key by metric_name and source to allow comparison
+        key = f"{baseline['metric_name']}:{baseline.get('source', 'datadog')}"
+        baselines[key] = baseline
 
     return baselines
+
+
+def get_baselines_for_comparison(hostname: str) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    """Get baselines organized for cross-source comparison.
+
+    Returns a dict structured as: {metric_name: {source: baseline_data}}
+    This allows easy comparison of the same metric from different sources.
+    """
+    with get_db_connection() as conn:
+        if USE_POSTGRES:
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cursor.execute('SELECT * FROM datadog_baselines WHERE hostname = %s', (hostname,))
+        else:
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM datadog_baselines WHERE hostname = ?', (hostname,))
+
+        rows = cursor.fetchall()
+
+    comparison = {}
+    for row in rows:
+        if USE_POSTGRES:
+            baseline = dict(row)
+        else:
+            baseline = {
+                'id': row['id'],
+                'hostname': row['hostname'],
+                'metric_name': row['metric_name'],
+                'baseline_avg': row['baseline_avg'],
+                'baseline_min': row['baseline_min'],
+                'baseline_max': row['baseline_max'],
+                'baseline_stddev': row['baseline_stddev'],
+                'sample_count': row['sample_count'],
+                'period_start': row['period_start'],
+                'period_end': row['period_end'],
+                'source': row['source'] if 'source' in row.keys() else 'datadog',
+                'created_at': row['created_at'],
+                'updated_at': row['updated_at']
+            }
+
+        metric_name = baseline['metric_name']
+        source = baseline.get('source', 'datadog')
+
+        if metric_name not in comparison:
+            comparison[metric_name] = {}
+        comparison[metric_name][source] = baseline
+
+    return comparison
 
 
 # Initialize database on import
