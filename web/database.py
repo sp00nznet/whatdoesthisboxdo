@@ -69,12 +69,33 @@ def get_encryption_key() -> bytes:
     return key
 
 
+SECRET_KEY_PATH = DB_DIR / '.secret_key'
+
+
+def get_secret_key() -> str:
+    """Flask session key: SECRET_KEY from the environment, else a random key
+    generated once and kept next to the database (web/data is gitignored).
+    Never a hard-coded default: anyone could forge sessions with a published one."""
+    env_key = os.environ.get('SECRET_KEY')
+    if env_key:
+        return env_key
+    DB_DIR.mkdir(exist_ok=True)
+    if SECRET_KEY_PATH.exists():
+        return SECRET_KEY_PATH.read_text().strip()
+    key = secrets.token_hex(32)
+    SECRET_KEY_PATH.write_text(key)
+    SECRET_KEY_PATH.chmod(0o600)
+    return key
+
+
 def encrypt_value(value: str) -> str:
     """Encrypt a string value."""
     if not value:
         return ''
     if not CRYPTO_AVAILABLE:
-        return 'b64:' + base64.b64encode(value.encode()).decode()
+        # Never fall back to base64: that stores credentials readable by anyone
+        # with the database file. Old 'b64:' values still decrypt below.
+        raise RuntimeError("cryptography is required to store credentials: pip install cryptography")
 
     key = get_encryption_key()
     f = Fernet(key)

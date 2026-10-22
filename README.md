@@ -169,6 +169,11 @@ Run the web interface for a user-friendly way to analyze servers and download ou
 ### Quick Start with Docker
 
 ```bash
+# Set SECRET_KEY, ENCRYPTION_KEY and POSTGRES_PASSWORD first: compose refuses
+# to start without them (there are no default secrets). See .env.example.
+cp .env.example .env
+python3 -c "import secrets; print(secrets.token_hex(32))"   # paste into .env, once per key
+
 # Start the web interface
 docker-compose up -d
 
@@ -197,11 +202,11 @@ docker-compose up -d
 ### Running Locally
 
 ```bash
-# Install dependencies
-pip3 install flask
+# Install dependencies (cryptography is required: credentials are never stored unencrypted)
+pip3 install -r requirements.txt
 
-# Set environment variables
-export FLASK_SECRET_KEY="your-secret-key"
+# Optional: without SECRET_KEY a random one is generated once and kept in web/data/
+export SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
 export API_KEY="your-api-key"  # Required for REST API
 
 # Run the web server

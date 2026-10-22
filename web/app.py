@@ -52,14 +52,14 @@ from database import (
     init_db, admin_exists, create_admin_user, verify_admin_user, update_admin_login,
     change_admin_password, save_credential, get_credential, list_credentials,
     delete_credential, save_env_variable, get_env_variable, list_env_variables,
-    delete_env_variable, load_env_variables_to_environ
+    delete_env_variable, load_env_variables_to_environ, get_secret_key
 )
 
 # Load stored environment variables
 load_env_variables_to_environ()
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'whatdoesthisboxdo-dev-key')
+app.secret_key = get_secret_key()
 
 # Configuration
 UPLOAD_FOLDER = Path(__file__).parent / 'uploads'
