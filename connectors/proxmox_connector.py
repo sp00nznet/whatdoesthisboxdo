@@ -4,6 +4,7 @@ Connects to Proxmox VE to get VM/container information
 """
 
 import logging
+import os
 from typing import Dict, List, Any, Optional
 import urllib3
 
@@ -30,7 +31,11 @@ except ImportError:
 class ProxmoxConnector:
     """Connects to Proxmox VE API"""
 
-    def __init__(self, host: str, username: str, password: str, verify_ssl: bool = False):
+    def __init__(self, host: str, username: str, password: str, verify_ssl: bool = None):
+        # Verify TLS by default. Proxmox ships a self-signed certificate, so
+        # PROXMOX_VERIFY_SSL=false is the explicit opt-out for labs.
+        if verify_ssl is None:
+            verify_ssl = os.environ.get('PROXMOX_VERIFY_SSL', 'true').lower() not in ('0', 'false', 'no')
         self.host = host
         self.username = username
         self.password = password

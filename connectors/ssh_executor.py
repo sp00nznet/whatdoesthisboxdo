@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import os
 import socket
+from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 
@@ -57,6 +58,15 @@ class SSHExecutor:
         """Establish SSH connection to the remote server"""
         try:
             self.client = paramiko.SSHClient()
+            # Trust on first use, like `ssh -o StrictHostKeyChecking=accept-new`:
+            # a new host's key is recorded; a changed key fails the connection
+            # (paramiko raises BadHostKeyException) instead of being accepted.
+            self.client.load_system_host_keys()
+            known_hosts = Path(os.environ.get(
+                'SSH_KNOWN_HOSTS', '~/.whatdoesthisboxdo/known_hosts')).expanduser()
+            known_hosts.parent.mkdir(parents=True, exist_ok=True)
+            known_hosts.touch(exist_ok=True)
+            self.client.load_host_keys(str(known_hosts))
             self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
             connect_kwargs = {
@@ -83,7 +93,12 @@ class SSHExecutor:
             if self.config.password:
                 connect_kwargs['password'] = self.config.password
 
-            self.client.connect(**connect_kwargs)
+            try:
+                self.client.connect(**connect_kwargs)
+            finally:
+                # Record a first-contact key even if login then fails, as ssh
+                # does; otherwise every failed attempt would trust a new key.
+                self.client.save_host_keys(str(known_hosts))
             self.connected = True
             logger.info(f"Connected to {self.config.hostname}")
 
@@ -93,6 +108,10 @@ class SSHExecutor:
 
             return True
 
+        except paramiko.BadHostKeyException as e:
+            logger.error(f"Host key for {self.config.hostname} has CHANGED; refusing to connect. "
+                         f"If the change is expected, remove its line from {known_hosts}: {e}")
+            return False
         except paramiko.AuthenticationException as e:
             logger.error(f"Authentication failed for {self.config.hostname}: {e}")
             return False

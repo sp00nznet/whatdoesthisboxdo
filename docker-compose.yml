@@ -13,13 +13,14 @@ services:
       - "5000:5000"
     environment:
       # Application settings
-      - SECRET_KEY=${SECRET_KEY:-change-me-in-production-use-random-string}
+      - SECRET_KEY=${SECRET_KEY:?set SECRET_KEY in .env (see .env.example)}
       - DEBUG=${DEBUG:-false}
       - PORT=5000
       # Database connection (PostgreSQL)
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-whatdoesthisboxdo}:${POSTGRES_PASSWORD:-whatdoesthisboxdo}@db:5432/${POSTGRES_DB:-whatdoesthisboxdo}
-      # Encryption key for credentials (IMPORTANT: set this in production!)
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-change-me-use-random-32-byte-key}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-whatdoesthisboxdo}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (see .env.example)}@db:5432/${POSTGRES_DB:-whatdoesthisboxdo}
+      # Encryption key for stored credentials. Required: there is no default,
+      # because a default would be published here for anyone to decrypt with.
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?set ENCRYPTION_KEY in .env (see .env.example)}
     volumes:
       # Persist generated documentation
       - docs_output:/app/web/output
@@ -48,7 +49,7 @@ services:
     container_name: whatdoesthisboxdo-db
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-whatdoesthisboxdo}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-whatdoesthisboxdo}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (see .env.example)}
       - POSTGRES_DB=${POSTGRES_DB:-whatdoesthisboxdo}
     volumes:
       # Persist database data

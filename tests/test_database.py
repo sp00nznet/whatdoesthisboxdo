@@ -401,3 +401,33 @@ class TestEnvVariableOperations:
 
             result = get_env_variable('UPDATE_VAR')
             assert result == 'updated'
+
+
+class TestNoInsecureDefaults:
+    """No published fallback secrets, and no plaintext credential storage."""
+
+    def test_secret_key_generated_once_and_kept(self, tmp_path, monkeypatch):
+        from web import database
+        monkeypatch.delenv('SECRET_KEY', raising=False)
+        monkeypatch.setattr(database, 'DB_DIR', tmp_path)
+        monkeypatch.setattr(database, 'SECRET_KEY_PATH', tmp_path / '.secret_key')
+        first = database.get_secret_key()
+        assert len(first) == 64 and first != 'whatdoesthisboxdo-dev-key'
+        assert database.get_secret_key() == first
+        monkeypatch.setenv('SECRET_KEY', 'from-env')
+        assert database.get_secret_key() == 'from-env'
+
+    def test_no_base64_fallback_without_cryptography(self, monkeypatch):
+        from web import database
+        monkeypatch.setattr(database, 'CRYPTO_AVAILABLE', False)
+        with pytest.raises(RuntimeError):
+            database.encrypt_value('hunter2')
+
+    def test_legacy_base64_values_still_readable(self):
+        from web.database import decrypt_value
+        assert decrypt_value('b64:aHVudGVyMg==') == 'hunter2'
+
+    def test_compose_has_no_fallback_secrets(self):
+        compose = (Path(__file__).parent.parent / 'docker-compose.yml').read_text()
+        for name in ('SECRET_KEY', 'ENCRYPTION_KEY', 'POSTGRES_PASSWORD'):
+            assert '${' + name + ':-' not in compose
